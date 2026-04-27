@@ -1,7 +1,7 @@
 {
   "paths": {
     "input_root": "IN/SPOD",
-    "output_excel_dir": "OUT/CSV",
+    "output_excel_dir": "OUT/XLS",
     "output_db_dir": "OUT/DB",
     "log_dir": "log"
   },
@@ -134,7 +134,8 @@
   },
   "excel": {
     "one_sheet_per_entity": true,
-    "output_name_pattern": "SPOD_Export_%Y%m%d_%H%M%S.xlsx",
+    "output_name_prefix": "SPOD_Export",
+    "output_timestamp_format": "%Y%m%d_%H%M%S",
     "formatting_defaults": {
       "max_column_width": 150,
       "wrap_text_all_cells": true,
@@ -144,7 +145,25 @@
       "data_horizontal": "left",
       "data_vertical": "center",
       "missing_prom_fill": "FFFDE9",
-      "same_key_diff_fill": "FDE9E9"
+      "same_key_diff_fill": "FDE9E9",
+      "key_header_fill": "FCE4B2",
+      "fill_priority": ["same_key_diff", "missing_prom"],
+      "service_fields": [
+        "source_stands",
+        "source_count",
+        "is_equal_all",
+        "diff_group_key",
+        "same_key_diff_values_flag",
+        "same_key_diff_values_note"
+      ],
+      "borders": {
+        "color": "666666",
+        "horizontal_style": "dashed",
+        "vertical_style": "dotted",
+        "header_separator_style": "double",
+        "service_separator_style": "thick",
+        "service_separator_side": "top"
+      }
     },
     "summary_sheet": {
       "freeze_panes": "B2",

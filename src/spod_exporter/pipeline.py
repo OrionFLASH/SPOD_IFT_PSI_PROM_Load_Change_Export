@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from .logging_setup import debug_extra
 from .models import FileDescriptor, MergedRow, ParsedRow
@@ -394,6 +394,7 @@ class SpodPipeline:
             base_headers=summary_headers,
             sheet_config=self.config["excel"].get("summary_sheet", {}),
             is_entity_sheet=False,
+            entity_name=None,
         )
 
         for entity in self.entities.keys():
@@ -421,12 +422,14 @@ class SpodPipeline:
                 base_headers=base_headers,
                 sheet_config=sheet_config,
                 is_entity_sheet=True,
+                entity_name=entity,
             )
             summary.append([entity, len(rows), equal_all, len(rows) - equal_all])
 
-        file_name = datetime.now().strftime(
-            self.config["excel"]["output_name_pattern"]
-        )
+        output_prefix = self.config["excel"]["output_name_prefix"]
+        timestamp_format = self.config["excel"]["output_timestamp_format"]
+        timestamp_value = datetime.now().strftime(timestamp_format)
+        file_name = f"{output_prefix}_{timestamp_value}.xlsx"
         excel_path = self.paths["output_excel_dir"] / file_name
         workbook.save(excel_path)
         self.logger.info("Excel сформирован: %s", excel_path)
@@ -458,6 +461,7 @@ class SpodPipeline:
         base_headers: list[str],
         sheet_config: dict[str, Any],
         is_entity_sheet: bool,
+        entity_name: str | None = None,
     ) -> None:
         """Применяет форматирование листа по параметрам из config.json."""
         formatting_defaults = self.config["excel"].get("formatting_defaults", {})
@@ -487,12 +491,48 @@ class SpodPipeline:
             fill_type="solid",
             fgColor=sheet_formatting.get("same_key_diff_fill", "FDE9E9"),
         )
+        key_header_fill = PatternFill(
+            fill_type="solid",
+            fgColor=sheet_formatting.get("key_header_fill", "FCE4B2"),
+        )
+        fill_priority: list[str] = sheet_formatting.get(
+            "fill_priority", ["same_key_diff", "missing_prom"]
+        )
+        borders_cfg = sheet_formatting.get("borders", {})
+        border_color = borders_cfg.get("color", "666666")
+        horizontal_side = Side(
+            style=borders_cfg.get("horizontal_style", "dashed"),
+            color=border_color,
+        )
+        vertical_side = Side(
+            style=borders_cfg.get("vertical_style", "dotted"),
+            color=border_color,
+        )
+        header_separator_side = Side(
+            style=borders_cfg.get("header_separator_style", "double"),
+            color=border_color,
+        )
+        service_separator_side = Side(
+            style=borders_cfg.get("service_separator_style", "thick"),
+            color=border_color,
+        )
+        service_separator_edge = borders_cfg.get("service_separator_side", "top")
+        service_fields = set(sheet_formatting.get("service_fields", []))
+        service_column_indexes = {
+            idx + 1 for idx, name in enumerate(base_headers) if name in service_fields
+        }
 
         # Заголовок: жирный + центрирование.
+        key_fields: set[str] = set()
+        if entity_name and entity_name in self.entities:
+            key_fields = set(self.entities[entity_name].get("business_key", []))
         for col_idx, _ in enumerate(base_headers, start=1):
             cell = sheet.cell(row=1, column=col_idx)
             cell.font = header_font
             cell.alignment = header_alignment
+            cell.border = Border(bottom=header_separator_side)
+            if base_headers[col_idx - 1] in key_fields:
+                cell.fill = key_header_fill
 
         # Данные: выравнивание, перенос и цветовые правила.
         source_stands_index = (
@@ -505,27 +545,35 @@ class SpodPipeline:
         )
 
         for row_idx in range(2, sheet.max_row + 1):
-            row_fill: PatternFill | None = None
-            if is_entity_sheet and same_key_diff_index is not None:
-                same_key_diff_value = str(sheet.cell(row=row_idx, column=same_key_diff_index).value or "")
-                if same_key_diff_value == "1":
-                    row_fill = red_fill
-            if (
-                is_entity_sheet
-                and row_fill is None
-                and source_stands_index is not None
-            ):
-                stands_value = str(sheet.cell(row=row_idx, column=source_stands_index).value or "")
-                has_prom = "PROM" in stands_value
-                has_ift_or_psi = ("IFT" in stands_value) or ("PSI" in stands_value)
-                if (not has_prom) and has_ift_or_psi:
-                    row_fill = yellow_fill
+            row_fill: PatternFill | None = self._resolve_row_fill(
+                row_idx=row_idx,
+                sheet=sheet,
+                is_entity_sheet=is_entity_sheet,
+                source_stands_index=source_stands_index,
+                same_key_diff_index=same_key_diff_index,
+                fill_priority=fill_priority,
+                yellow_fill=yellow_fill,
+                red_fill=red_fill,
+            )
 
             for col_idx in range(1, len(base_headers) + 1):
                 cell = sheet.cell(row=row_idx, column=col_idx)
                 cell.alignment = data_alignment
+                cell.border = Border(
+                    left=vertical_side,
+                    right=vertical_side,
+                    top=horizontal_side,
+                    bottom=horizontal_side,
+                )
                 if row_fill is not None:
                     cell.fill = row_fill
+
+                if col_idx in service_column_indexes:
+                    cell.border = self._with_border_side(
+                        border=cell.border,
+                        side_name=service_separator_edge,
+                        side_value=service_separator_side,
+                    )
 
         # Автоподбор ширины колонок с ограничением max_column_width.
         for col_idx in range(1, len(base_headers) + 1):
@@ -540,6 +588,59 @@ class SpodPipeline:
                     max_len = candidate_len
             width = min(max(max_len + 2, 10), max_column_width)
             sheet.column_dimensions[self._column_name(col_idx)].width = width
+
+    def _with_border_side(
+        self, border: Border, side_name: str, side_value: Side
+    ) -> Border:
+        """Возвращает Border с замененной одной стороной."""
+        sides = {
+            "left": border.left,
+            "right": border.right,
+            "top": border.top,
+            "bottom": border.bottom,
+        }
+        if side_name not in sides:
+            return border
+        sides[side_name] = side_value
+        return Border(
+            left=sides["left"],
+            right=sides["right"],
+            top=sides["top"],
+            bottom=sides["bottom"],
+        )
+
+    def _resolve_row_fill(
+        self,
+        row_idx: int,
+        sheet: Any,
+        is_entity_sheet: bool,
+        source_stands_index: int | None,
+        same_key_diff_index: int | None,
+        fill_priority: list[str],
+        yellow_fill: PatternFill,
+        red_fill: PatternFill,
+    ) -> PatternFill | None:
+        """Возвращает цвет строки в порядке приоритета из config."""
+        if not is_entity_sheet:
+            return None
+
+        conditions: dict[str, bool] = {}
+        if same_key_diff_index is not None:
+            same_key_diff_value = str(sheet.cell(row=row_idx, column=same_key_diff_index).value or "")
+            conditions["same_key_diff"] = same_key_diff_value == "1"
+        if source_stands_index is not None:
+            stands_value = str(sheet.cell(row=row_idx, column=source_stands_index).value or "")
+            has_prom = "PROM" in stands_value
+            has_ift_or_psi = ("IFT" in stands_value) or ("PSI" in stands_value)
+            conditions["missing_prom"] = (not has_prom) and has_ift_or_psi
+
+        for rule_name in fill_priority:
+            if conditions.get(rule_name, False):
+                if rule_name == "same_key_diff":
+                    return red_fill
+                if rule_name == "missing_prom":
+                    return yellow_fill
+        return None
 
     def _log_found_files_summary(self, files: list[FileDescriptor]) -> None:
         """Показывает в консоли, сколько и каких файлов найдено."""
