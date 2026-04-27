@@ -31,6 +31,8 @@ class SpodPipeline:
         }
         self.entities: dict[str, dict[str, Any]] = config["entities"]
         self.stands: list[str] = config["stands"]
+        self.entity_field_orders: dict[str, dict[str, list[str]]] = defaultdict(dict)
+        self.entity_extra_fields: dict[str, set[str]] = defaultdict(set)
 
         self.paths["output_excel_dir"].mkdir(parents=True, exist_ok=True)
         self.paths["output_db_dir"].mkdir(parents=True, exist_ok=True)
@@ -236,6 +238,10 @@ class SpodPipeline:
 
             with descriptor.file_path.open("r", encoding="utf-8-sig", newline="") as file:
                 reader = csv.DictReader(file, delimiter=";")
+                if reader.fieldnames is not None:
+                    self.entity_field_orders[descriptor.entity][descriptor.stand] = list(
+                        reader.fieldnames
+                    )
                 for row_num, row in enumerate(reader, start=2):
                     normalized = self._normalize_row(row)
                     business_key = self._build_business_key(descriptor.entity, normalized)
@@ -317,39 +323,16 @@ class SpodPipeline:
         }
 
         for entity, rows in parsed_rows.items():
-            grouped: dict[tuple[str, str], list[ParsedRow]] = defaultdict(list)
-            for row in rows:
-                grouped[(row.business_key, row.row_hash)].append(row)
-
-            merged_rows: list[MergedRow] = []
-            by_business_key_counts: dict[str, int] = defaultdict(int)
-
-            for (business_key, row_hash), group_rows in grouped.items():
-                stands = sorted({row.stand for row in group_rows})
-                source_stands = "-".join(stands)
-                source_count = len(stands)
-                by_business_key_counts[business_key] += 1
-                diff_group_key = f"{entity}:{business_key}:{by_business_key_counts[business_key]}"
-                base_data = dict(group_rows[0].data)
-                base_data["source_stands"] = source_stands
-                base_data["source_count"] = str(source_count)
-                base_data["is_equal_all"] = "1" if source_count == len(self.stands) else "0"
-                base_data["diff_group_key"] = diff_group_key
-
-                merged_rows.append(
-                    MergedRow(
-                        entity=entity,
-                        business_key=business_key,
-                        row_hash=row_hash,
-                        source_stands=source_stands,
-                        source_count=source_count,
-                        is_equal_all=source_count == len(self.stands),
-                        diff_group_key=diff_group_key,
-                        merged_data=base_data,
-                    )
+            optional_cfg = self.entities[entity].get("optional_fields", {})
+            if optional_cfg.get("enabled", False):
+                merged_rows, by_business_key_counts = self._merge_entity_with_optional_fields(
+                    entity=entity,
+                    rows=rows,
+                    reference_stand=optional_cfg.get("reference_stand", "PROM"),
                 )
+            else:
+                merged_rows, by_business_key_counts = self._merge_entity_default(entity, rows)
 
-            # Для каждого business_key отмечаем строки, где найдено несколько разных значений.
             for item in merged_rows:
                 has_diff_values = by_business_key_counts[item.business_key] > 1
                 item.merged_data["same_key_diff_values_flag"] = "1" if has_diff_values else "0"
@@ -376,6 +359,136 @@ class SpodPipeline:
             stats["same_key_different_values_total"] += same_key_different
         return result, stats
 
+    def _merge_entity_default(
+        self, entity: str, rows: list[ParsedRow]
+    ) -> tuple[list[MergedRow], dict[str, int]]:
+        grouped: dict[tuple[str, str], list[ParsedRow]] = defaultdict(list)
+        for row in rows:
+            grouped[(row.business_key, row.row_hash)].append(row)
+
+        merged_rows: list[MergedRow] = []
+        by_business_key_counts: dict[str, int] = defaultdict(int)
+        for (business_key, row_hash), group_rows in grouped.items():
+            stands = sorted({row.stand for row in group_rows})
+            source_stands = "-".join(stands)
+            source_count = len(stands)
+            by_business_key_counts[business_key] += 1
+            diff_group_key = f"{entity}:{business_key}:{by_business_key_counts[business_key]}"
+            base_data = dict(group_rows[0].data)
+            base_data["source_stands"] = source_stands
+            base_data["source_count"] = str(source_count)
+            base_data["is_equal_all"] = "1" if source_count == len(self.stands) else "0"
+            base_data["diff_group_key"] = diff_group_key
+            merged_rows.append(
+                MergedRow(
+                    entity=entity,
+                    business_key=business_key,
+                    row_hash=row_hash,
+                    source_stands=source_stands,
+                    source_count=source_count,
+                    is_equal_all=source_count == len(self.stands),
+                    diff_group_key=diff_group_key,
+                    merged_data=base_data,
+                )
+            )
+        return merged_rows, by_business_key_counts
+
+    def _merge_entity_with_optional_fields(
+        self, entity: str, rows: list[ParsedRow], reference_stand: str
+    ) -> tuple[list[MergedRow], dict[str, int]]:
+        field_orders = self.entity_field_orders.get(entity, {})
+        reference_fields = set(field_orders.get(reference_stand, []))
+        all_fields = set()
+        for stand_fields in field_orders.values():
+            all_fields.update(stand_fields)
+        extra_fields = all_fields - reference_fields
+        self.entity_extra_fields[entity] = set(extra_fields)
+        non_extra_fields = [field for field in all_fields if field not in extra_fields]
+
+        by_key_rows: dict[str, list[ParsedRow]] = defaultdict(list)
+        for row in rows:
+            by_key_rows[row.business_key].append(row)
+
+        merged_rows: list[MergedRow] = []
+        by_business_key_counts: dict[str, int] = defaultdict(int)
+        stand_priority = [reference_stand] + [stand for stand in self.stands if stand != reference_stand]
+        stand_rank = {name: idx for idx, name in enumerate(stand_priority)}
+
+        for business_key, key_rows in by_key_rows.items():
+            sorted_rows = sorted(key_rows, key=lambda item: stand_rank.get(item.stand, 999))
+            clusters: list[list[ParsedRow]] = []
+            for candidate in sorted_rows:
+                placed = False
+                for cluster in clusters:
+                    if self._row_compatible_with_cluster(
+                        candidate=candidate,
+                        cluster=cluster,
+                        non_extra_fields=non_extra_fields,
+                        extra_fields=extra_fields,
+                    ):
+                        cluster.append(candidate)
+                        placed = True
+                        break
+                if not placed:
+                    clusters.append([candidate])
+
+            for cluster_rows in clusters:
+                by_business_key_counts[business_key] += 1
+                stands = sorted({row.stand for row in cluster_rows})
+                source_stands = "-".join(stands)
+                source_count = len(stands)
+                diff_group_key = f"{entity}:{business_key}:{by_business_key_counts[business_key]}"
+                base_data = dict(cluster_rows[0].data)
+                base_data["source_stands"] = source_stands
+                base_data["source_count"] = str(source_count)
+                base_data["is_equal_all"] = "1" if source_count == len(self.stands) else "0"
+                base_data["diff_group_key"] = diff_group_key
+                merged_rows.append(
+                    MergedRow(
+                        entity=entity,
+                        business_key=business_key,
+                        row_hash=self._hash_json(base_data),
+                        source_stands=source_stands,
+                        source_count=source_count,
+                        is_equal_all=source_count == len(self.stands),
+                        diff_group_key=diff_group_key,
+                        merged_data=base_data,
+                    )
+                )
+        return merged_rows, by_business_key_counts
+
+    def _row_compatible_with_cluster(
+        self,
+        candidate: ParsedRow,
+        cluster: list[ParsedRow],
+        non_extra_fields: list[str],
+        extra_fields: set[str],
+    ) -> bool:
+        for row in cluster:
+            if not self._rows_compatible(
+                left=row.data,
+                right=candidate.data,
+                non_extra_fields=non_extra_fields,
+                extra_fields=extra_fields,
+            ):
+                return False
+        return True
+
+    def _rows_compatible(
+        self,
+        left: dict[str, str],
+        right: dict[str, str],
+        non_extra_fields: list[str],
+        extra_fields: set[str],
+    ) -> bool:
+        for field in non_extra_fields:
+            if left.get(field, "") != right.get(field, ""):
+                return False
+        for field in extra_fields:
+            if field in left and field in right and left.get(field, "") != right.get(field, ""):
+                return False
+        return True
+
     def _export_excel(self, merged: dict[str, list[MergedRow]]) -> Path:
         """Создает Excel-файл: 1 лист на сущность + служебные колонки."""
         workbook = Workbook()
@@ -400,11 +513,7 @@ class SpodPipeline:
         for entity in self.entities.keys():
             sheet = workbook.create_sheet(entity)
             rows = merged.get(entity, [])
-
-            if rows:
-                base_headers = list(rows[0].merged_data.keys())
-            else:
-                base_headers = []
+            base_headers = self._build_entity_headers(entity, rows)
             sheet.append(base_headers)
 
             equal_all = 0
@@ -434,6 +543,32 @@ class SpodPipeline:
         workbook.save(excel_path)
         self.logger.info("Excel сформирован: %s", excel_path)
         return excel_path
+
+    def _build_entity_headers(self, entity: str, rows: list[MergedRow]) -> list[str]:
+        """Строит порядок колонок: эталон PROM + доп.поля в местах появления."""
+        service_fields_order = self.config["excel"]["formatting_defaults"].get("service_fields", [])
+        present_service = [field for field in service_fields_order if any(field in row.merged_data for row in rows)]
+
+        field_orders = self.entity_field_orders.get(entity, {})
+        reference_stand = self.entities[entity].get("optional_fields", {}).get("reference_stand", "PROM")
+        reference_headers = list(field_orders.get(reference_stand, []))
+        combined_headers = list(reference_headers)
+
+        for stand in self.stands:
+            stand_headers = field_orders.get(stand, [])
+            for index, field in enumerate(stand_headers):
+                if field in combined_headers:
+                    continue
+                insert_index = min(index, len(combined_headers))
+                combined_headers.insert(insert_index, field)
+
+        if not combined_headers and rows:
+            combined_headers = [key for key in rows[0].merged_data.keys() if key not in service_fields_order]
+
+        for service_field in present_service:
+            if service_field not in combined_headers:
+                combined_headers.append(service_field)
+        return combined_headers
 
     def _apply_sheet_layout(
         self, sheet: Any, sheet_config: dict[str, Any], header_columns_count: int
@@ -495,6 +630,10 @@ class SpodPipeline:
             fill_type="solid",
             fgColor=sheet_formatting.get("key_header_fill", "FCE4B2"),
         )
+        extra_header_fill = PatternFill(
+            fill_type="solid",
+            fgColor=sheet_formatting.get("extra_header_fill", "E2F0D9"),
+        )
         fill_priority: list[str] = sheet_formatting.get(
             "fill_priority", ["same_key_diff", "missing_prom"]
         )
@@ -524,8 +663,10 @@ class SpodPipeline:
 
         # Заголовок: жирный + центрирование.
         key_fields: set[str] = set()
+        extra_fields: set[str] = set()
         if entity_name and entity_name in self.entities:
             key_fields = set(self.entities[entity_name].get("business_key", []))
+            extra_fields = self.entity_extra_fields.get(entity_name, set())
         for col_idx, _ in enumerate(base_headers, start=1):
             cell = sheet.cell(row=1, column=col_idx)
             cell.font = header_font
@@ -533,6 +674,8 @@ class SpodPipeline:
             cell.border = Border(bottom=header_separator_side)
             if base_headers[col_idx - 1] in key_fields:
                 cell.fill = key_header_fill
+            elif base_headers[col_idx - 1] in extra_fields:
+                cell.fill = extra_header_fill
 
         # Данные: выравнивание, перенос и цветовые правила.
         source_stands_index = (
