@@ -660,6 +660,9 @@ class SpodPipeline:
         service_column_indexes = {
             idx + 1 for idx, name in enumerate(base_headers) if name in service_fields
         }
+        first_service_column_index = (
+            min(service_column_indexes) if service_column_indexes else None
+        )
 
         # Заголовок: жирный + центрирование.
         key_fields: set[str] = set()
@@ -711,7 +714,7 @@ class SpodPipeline:
                 if row_fill is not None:
                     cell.fill = row_fill
 
-                if col_idx in service_column_indexes:
+                if first_service_column_index is not None and col_idx == first_service_column_index:
                     cell.border = self._with_border_side(
                         border=cell.border,
                         side_name=service_separator_edge,
