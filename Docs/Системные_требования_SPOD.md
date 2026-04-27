@@ -1,0 +1,52 @@
+# Системные требования: SPOD консолидация
+
+## 1. Функциональные требования
+
+- Загрузка CSV из `IN/SPOD/{IFT,PROM,PSI}`.
+- Поддержка 10 типов сущностей.
+- Объединение строк между стендами по ключам и hash.
+- Экспорт в Excel (по листу на каждую сущность + summary).
+- Сохранение в SQLite:
+  - метаданных загруженных файлов;
+  - сырых строк;
+  - объединенных строк;
+  - статуса запусков.
+- Дедупликация файлов по `SHA-256`.
+
+## 2. Нефункциональные требования
+
+- Идемпотентность повторных запусков (без дублей файлов в БД).
+- Трассируемость источника каждой объединенной строки.
+- Конфигурируемость через `config.json` без правки кода.
+- Читабельные логи уровней `INFO` и `DEBUG`.
+
+## 3. Требования к логированию
+
+- Каталог логов: `log`.
+- Шаблон имен:
+  - `INFO_<topic>_YYYYMMDD_HH.log`
+  - `DEBUG_<topic>_YYYYMMDD_HH.log`
+- Формат DEBUG:
+
+`дата время - [уровень] - сообщение [class: <имя класса> | def: <имя функции>]`
+
+## 4. Требования к данным и ключам
+
+Ключи по умолчанию:
+- `CONTEST`: `CONTEST_CODE`
+- `EMPLOYEE`: `PERSON_NUMBER`
+- `GROUP`: `CONTEST_CODE + GROUP_CODE + GROUP_VALUE`
+- `INDICATOR`: `CONTEST_CODE + INDICATOR_CODE + N`
+- `ORG_UNIT_V20`: `ORG_UNIT_CODE`
+- `REPORT`: `MANAGER_PERSON_NUMBER + CONTEST_CODE + TOURNAMENT_CODE + CONTEST_DATE`
+- `REWARD`: `REWARD_CODE`
+- `REWARD-LINK`: `CONTEST_CODE + GROUP_CODE + REWARD_CODE`
+- `SCHEDULE`: `TOURNAMENT_CODE`
+- `USER_ROLE`: `RULE_NUM`
+
+## 5. Требования к окружению
+
+- Python 3.11+ (текущая среда совместима).
+- Зависимости из `requirements.txt`.
+- Наличие прав на чтение `IN`, запись в `OUT` и `log`.
+
