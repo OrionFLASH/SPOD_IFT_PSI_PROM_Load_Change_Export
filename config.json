@@ -163,7 +163,10 @@
         "is_equal_all",
         "diff_group_key",
         "same_key_diff_values_flag",
-        "same_key_diff_values_note"
+        "same_key_diff_values_note",
+        "diff_columns",
+        "diff_positions",
+        "diff_snippets"
       ],
       "borders": {
         "color": "666666",
@@ -177,6 +180,14 @@
     "summary_sheet": {
       "freeze_panes": "B2",
       "auto_filter_header": true
+    },
+    "diff_report_sheet": {
+      "enabled": true,
+      "name": "DIFF_REPORT",
+      "freeze_panes": "A2",
+      "auto_filter_header": true,
+      "left_context_chars": 10,
+      "right_context_chars": 20
     }
   },
   "sqlite": {
@@ -184,9 +195,10 @@
     "dedup_mode": "sha256"
   },
   "merge": {
-    "trim_values": true,
+    "trim_values": false,
     "empty_to_null": false,
-    "compare_strategy": "full_row_hash"
+    "compare_strategy": "full_row_hash",
+    "reference_row_stand": "PROM"
   },
   "logging": {
     "topic": "spod_export"
@@ -194,7 +206,8 @@
   "runtime": {
     "fail_fast": true,
     "max_errors": 20,
-    "dry_run": false
+    "dry_run": false,
+    "parallel_workers": "auto"
   }
 }
 

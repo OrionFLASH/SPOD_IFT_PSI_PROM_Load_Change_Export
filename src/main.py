@@ -17,6 +17,17 @@ def parse_args() -> argparse.Namespace:
         default=Path("config.json"),
         help="Путь к config.json",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Выполнить обработку без записи в SQLite raw/merged и без сохранения Excel",
+    )
+    parser.add_argument(
+        "--parallel-workers",
+        type=int,
+        default=0,
+        help="Число потоков для параллельной обработки (0 = авто)",
+    )
     return parser.parse_args()
 
 
@@ -24,6 +35,11 @@ def main() -> None:
     """Точка входа CLI."""
     args = parse_args()
     config = load_config(args.config)
+    runtime_cfg = config.setdefault("runtime", {})
+    if args.dry_run:
+        runtime_cfg["dry_run"] = True
+    if args.parallel_workers and args.parallel_workers > 0:
+        runtime_cfg["parallel_workers"] = args.parallel_workers
 
     logger, info_path, debug_path = setup_logging(
         Path(config["paths"]["log_dir"]), config["logging"]["topic"]

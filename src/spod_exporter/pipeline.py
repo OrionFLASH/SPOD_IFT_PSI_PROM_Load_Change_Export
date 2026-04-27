@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-import csv
+import os
 import hashlib
 import json
 import sqlite3
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +35,9 @@ class SpodPipeline:
         self.stands: list[str] = config["stands"]
         self.entity_field_orders: dict[str, dict[str, list[str]]] = defaultdict(dict)
         self.entity_extra_fields: dict[str, set[str]] = defaultdict(set)
+        self.runtime_cfg: dict[str, Any] = config.get("runtime", {})
+        self.dry_run: bool = bool(self.runtime_cfg.get("dry_run", False))
+        self.parallel_workers: int = self._resolve_parallel_workers()
 
         self.paths["output_excel_dir"].mkdir(parents=True, exist_ok=True)
         self.paths["output_db_dir"].mkdir(parents=True, exist_ok=True)
@@ -40,26 +45,54 @@ class SpodPipeline:
         db_name: str = config["sqlite"]["db_name"]
         self.db_path: Path = self.paths["output_db_dir"] / db_name
 
+    def _resolve_parallel_workers(self) -> int:
+        """Определяет число потоков: авто по ядрам или из runtime.parallel_workers."""
+        requested = self.runtime_cfg.get("parallel_workers", "auto")
+        if isinstance(requested, int) and requested > 0:
+            return requested
+        cpu_count = os.cpu_count() or 1
+        return max(1, min(32, cpu_count))
+
     def run(self) -> tuple[Path, Path]:
         """Запускает полный цикл обработки по ТЗ."""
+        stage_timings: dict[str, float] = {}
+        run_started = time.perf_counter()
         conn = sqlite3.connect(self.db_path)
         try:
             self.logger.info("Проверка входных файлов перед стартом...")
+            self.logger.info(
+                "Режим выполнения: dry_run=%s, parallel_workers=%s",
+                self.dry_run,
+                self.parallel_workers,
+            )
             self._init_db(conn)
+            stage_start = time.perf_counter()
             files = self._scan_files()
+            stage_timings["scan_files"] = time.perf_counter() - stage_start
             self._log_found_files_summary(files)
+            stage_start = time.perf_counter()
             parsed, parse_stats = self._parse_all_rows(files, conn)
+            stage_timings["parse_rows"] = time.perf_counter() - stage_start
             self._log_parse_summary(parse_stats)
+            stage_start = time.perf_counter()
             merged, merge_stats = self._merge_rows(parsed)
+            stage_timings["merge_rows"] = time.perf_counter() - stage_start
             self._log_merge_summary(merge_stats)
+            stage_start = time.perf_counter()
+            self._save_merged_rows(conn, merged)
+            stage_timings["save_merged_rows"] = time.perf_counter() - stage_start
+            stage_start = time.perf_counter()
             excel_path = self._export_excel(merged)
+            stage_timings["export_excel"] = time.perf_counter() - stage_start
             self._save_run(conn, "SUCCESS", excel_path)
             conn.commit()
+            self._log_stage_timings(stage_timings, run_started)
             self.logger.info("Обработка завершена успешно")
             return self.db_path, excel_path
         except Exception:
             self._save_run(conn, "FAILED", None)
             conn.commit()
+            self._log_stage_timings(stage_timings, run_started)
             raise
         finally:
             conn.close()
@@ -154,11 +187,47 @@ class SpodPipeline:
             ),
         )
 
+    def _save_merged_rows(
+        self, conn: sqlite3.Connection, merged: dict[str, list[MergedRow]]
+    ) -> None:
+        """Сохраняет merged-набор пакетно в SQLite (кроме dry-run)."""
+        if self.dry_run:
+            self.logger.info("Dry-run: запись merged_rows в БД пропущена")
+            return
+        payload: list[tuple[Any, ...]] = []
+        for entity, rows in merged.items():
+            for row in rows:
+                payload.append(
+                    (
+                        self.run_id,
+                        entity,
+                        row.business_key,
+                        row.row_hash,
+                        row.source_stands,
+                        row.source_count,
+                        1 if row.is_equal_all else 0,
+                        row.diff_group_key,
+                        json.dumps(row.merged_data, ensure_ascii=False),
+                    )
+                )
+        if not payload:
+            return
+        conn.cursor().executemany(
+            """
+            INSERT INTO merged_rows(
+                run_id, entity_type, business_key, row_hash, source_stands,
+                source_count, is_equal_all, diff_group_key, merged_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            payload,
+        )
+
     def _scan_files(self) -> list[FileDescriptor]:
         """Сканирует входные каталоги по явным именам файлов из config.json."""
         descriptors: list[FileDescriptor] = []
         input_root: Path = self.paths["input_root"]
         missing_items: list[str] = []
+        existing_candidates: list[tuple[str, str, Path]] = []
 
         for stand in self.stands:
             stand_dir = input_root / stand
@@ -174,17 +243,7 @@ class SpodPipeline:
                         f"Не найден файл entity={entity}, stand={stand}: {file_path}"
                     )
                     continue
-                file_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
-                descriptors.append(
-                    FileDescriptor(
-                        stand=stand,
-                        entity=entity,
-                        file_path=file_path,
-                        file_name=file_path.name,
-                        file_hash=file_hash,
-                        file_size=file_path.stat().st_size,
-                    )
-                )
+                existing_candidates.append((stand, entity, file_path))
 
         if missing_items:
             message = "Старт прерван. Не найдены обязательные входные данные:\n" + "\n".join(
@@ -192,8 +251,30 @@ class SpodPipeline:
             )
             raise FileNotFoundError(message)
 
+        with ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
+            futures = [
+                executor.submit(self._build_file_descriptor, stand, entity, file_path)
+                for stand, entity, file_path in existing_candidates
+            ]
+            for future in as_completed(futures):
+                descriptors.append(future.result())
+
+        descriptors.sort(key=lambda item: (item.entity, item.stand))
+
         self.logger.info("Найдено входных файлов: %s", len(descriptors))
         return descriptors
+
+    def _build_file_descriptor(self, stand: str, entity: str, file_path: Path) -> FileDescriptor:
+        """Собирает метаданные файла (включая SHA-256)."""
+        file_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
+        return FileDescriptor(
+            stand=stand,
+            entity=entity,
+            file_path=file_path,
+            file_name=file_path.name,
+            file_hash=file_hash,
+            file_size=file_path.stat().st_size,
+        )
 
     def _parse_all_rows(
         self, files: list[FileDescriptor], conn: sqlite3.Connection
@@ -209,8 +290,10 @@ class SpodPipeline:
             "rows_by_entity": defaultdict(int),
         }
 
+        file_is_new_hash: dict[str, bool] = {}
         for descriptor in files:
             is_new_hash = self._is_new_file_hash(cursor, descriptor.file_hash)
+            file_is_new_hash[descriptor.file_hash] = is_new_hash
             status = "NEW" if is_new_hash else "SKIPPED_DUPLICATE"
             if is_new_hash:
                 stats["db_new_files"] += 1
@@ -236,52 +319,164 @@ class SpodPipeline:
                 ),
             )
 
-            with descriptor.file_path.open("r", encoding="utf-8-sig", newline="") as file:
-                reader = csv.DictReader(file, delimiter=";")
-                if reader.fieldnames is not None:
-                    self.entity_field_orders[descriptor.entity][descriptor.stand] = list(
-                        reader.fieldnames
-                    )
-                for row_num, row in enumerate(reader, start=2):
-                    normalized = self._normalize_row(row)
-                    business_key = self._build_business_key(descriptor.entity, normalized)
-                    row_hash = self._hash_json(normalized)
-                    stats["processed_rows"] += 1
-                    stats["rows_by_entity"][descriptor.entity] += 1
-                    parsed = ParsedRow(
-                        stand=descriptor.stand,
-                        entity=descriptor.entity,
-                        row_num=row_num,
-                        data=normalized,
-                        business_key=business_key,
-                        row_hash=row_hash,
-                    )
-                    by_entity[descriptor.entity].append(parsed)
+        with ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
+            futures = [executor.submit(self._parse_file_descriptor, descriptor) for descriptor in files]
+            for future in as_completed(futures):
+                descriptor, headers, parsed_rows = future.result()
+                self.entity_field_orders[descriptor.entity][descriptor.stand] = list(headers)
+                by_entity[descriptor.entity].extend(parsed_rows)
+                stats["processed_rows"] += len(parsed_rows)
+                stats["rows_by_entity"][descriptor.entity] += len(parsed_rows)
 
-                    if is_new_hash:
-                        cursor.execute(
-                            """
-                            INSERT INTO raw_rows(run_id, stand, entity_type, row_num, row_json, row_hash)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                self.run_id,
-                                descriptor.stand,
-                                descriptor.entity,
-                                row_num,
-                                json.dumps(normalized, ensure_ascii=False),
-                                row_hash,
-                            ),
+                if file_is_new_hash.get(descriptor.file_hash, False) and (not self.dry_run):
+                    raw_rows_payload = [
+                        (
+                            self.run_id,
+                            descriptor.stand,
+                            descriptor.entity,
+                            row.row_num,
+                            json.dumps(row.data, ensure_ascii=False),
+                            row.row_hash,
                         )
+                        for row in parsed_rows
+                    ]
+                    cursor.executemany(
+                        """
+                        INSERT INTO raw_rows(run_id, stand, entity_type, row_num, row_json, row_hash)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        raw_rows_payload,
+                    )
 
-            self.logger.debug(
-                "Обработан файл %s (%s)",
-                descriptor.file_name,
-                status,
-                extra=debug_extra("SpodPipeline", "_parse_all_rows"),
-            )
+                self.logger.debug(
+                    "Обработан файл %s (%s), строк=%s",
+                    descriptor.file_name,
+                    "NEW" if file_is_new_hash.get(descriptor.file_hash, False) else "SKIPPED_DUPLICATE",
+                    len(parsed_rows),
+                    extra=debug_extra("SpodPipeline", "_parse_all_rows"),
+                )
 
         return by_entity, stats
+
+    def _parse_file_descriptor(
+        self, descriptor: FileDescriptor
+    ) -> tuple[FileDescriptor, list[str], list[ParsedRow]]:
+        """Парсит один файл и подготавливает ParsedRow-пакет."""
+        headers, rows = self._read_csv_rows_preserve_raw(descriptor.file_path)
+        parsed_rows: list[ParsedRow] = []
+        for row_num, row in enumerate(rows, start=2):
+            normalized = self._normalize_row(row)
+            business_key = self._build_business_key(descriptor.entity, row)
+            row_hash = self._hash_json(normalized)
+            parsed_rows.append(
+                ParsedRow(
+                    stand=descriptor.stand,
+                    entity=descriptor.entity,
+                    row_num=row_num,
+                    data=row,
+                    business_key=business_key,
+                    row_hash=row_hash,
+                )
+            )
+        # Дубликат business_key в одном файле даёт несколько ParsedRow на стенд; source_stands
+        # тогда отражает все стенды, где есть строка с теми же значениями, что в отчёте (любая из дублей).
+        key_lines: dict[str, list[int]] = defaultdict(list)
+        for pr in parsed_rows:
+            key_lines[pr.business_key].append(pr.row_num)
+        for bk, lines in key_lines.items():
+            if len(lines) > 1:
+                self.logger.warning(
+                    "В файле %s (%s) business_key повторяется %s раз на строках %s%s",
+                    descriptor.file_name,
+                    descriptor.stand,
+                    len(lines),
+                    lines[:15],
+                    "..." if len(lines) > 15 else "",
+                    extra=debug_extra("SpodPipeline", "_parse_file_descriptor"),
+                )
+        return descriptor, headers, parsed_rows
+
+    def _read_csv_rows_preserve_raw(
+        self, file_path: Path
+    ) -> tuple[list[str], list[dict[str, str]]]:
+        """Читает CSV без изменения текстового содержимого полей."""
+        content = file_path.read_text(encoding="utf-8-sig")
+        records: list[str] = []
+        buffer: list[str] = []
+        in_quotes = False
+        i = 0
+        while i < len(content):
+            ch = content[i]
+            if ch == '"':
+                buffer.append(ch)
+                if i + 1 < len(content) and content[i + 1] == '"':
+                    buffer.append(content[i + 1])
+                    i += 2
+                    continue
+                in_quotes = not in_quotes
+                i += 1
+                continue
+            if ch == "\n" and not in_quotes:
+                record = "".join(buffer).rstrip("\r")
+                if record:
+                    records.append(record)
+                buffer = []
+                i += 1
+                continue
+            buffer.append(ch)
+            i += 1
+        tail = "".join(buffer).rstrip("\r")
+        if tail:
+            records.append(tail)
+
+        if not records:
+            return [], []
+
+        raw_headers = self._split_csv_record_preserve_raw(records[0])
+        # Единые имена колонок между стендами: BOM/пробелы в заголовке ломают сопоставление
+        # с эталонной строкой (ложное совпадение source_stands при разном смысле столбцов).
+        headers = [self._normalize_csv_header_name(h) for h in raw_headers]
+        rows: list[dict[str, str]] = []
+        for record in records[1:]:
+            values = self._split_csv_record_preserve_raw(record)
+            if len(values) < len(headers):
+                values.extend([""] * (len(headers) - len(values)))
+            if len(values) > len(headers):
+                values = values[: len(headers)]
+            rows.append(dict(zip(headers, values)))
+        return headers, rows
+
+    def _normalize_csv_header_name(self, name: str) -> str:
+        """Убирает BOM и лишние пробелы в имени колонки CSV для согласованности между файлами."""
+        cleaned = name.replace("\ufeff", "").strip()
+        return cleaned.lstrip("\ufeff").strip()
+
+    def _split_csv_record_preserve_raw(self, record: str) -> list[str]:
+        """Разделяет CSV-запись по `;`, сохраняя поле в исходном виде."""
+        fields: list[str] = []
+        buffer: list[str] = []
+        in_quotes = False
+        i = 0
+        while i < len(record):
+            ch = record[i]
+            if ch == '"':
+                buffer.append(ch)
+                if i + 1 < len(record) and record[i + 1] == '"':
+                    buffer.append(record[i + 1])
+                    i += 2
+                    continue
+                in_quotes = not in_quotes
+                i += 1
+                continue
+            if ch == ";" and not in_quotes:
+                fields.append("".join(buffer))
+                buffer = []
+                i += 1
+                continue
+            buffer.append(ch)
+            i += 1
+        fields.append("".join(buffer))
+        return fields
 
     def _is_new_file_hash(self, cursor: sqlite3.Cursor, file_hash: str) -> bool:
         cursor.execute(
@@ -292,9 +487,19 @@ class SpodPipeline:
     def _normalize_row(self, row: dict[str, str | None]) -> dict[str, str]:
         """Канонизирует CSV-строку для корректного сравнения между стендами."""
         normalized: dict[str, str] = {}
+        trim_values = self.config.get("merge", {}).get("trim_values", False)
+        empty_to_null = self.config.get("merge", {}).get("empty_to_null", False)
         for key, value in row.items():
-            # Сохраняем порядок и исходные колонки, но приводим пустые значения к единообразию.
-            normalized[key] = "" if value is None else value.strip()
+            if value is None:
+                normalized[key] = "" if not empty_to_null else "NULL"
+                continue
+            # По умолчанию сохраняем значения в исходном виде.
+            if trim_values:
+                normalized[key] = value.strip()
+            else:
+                normalized[key] = value
+            if empty_to_null and normalized[key] == "":
+                normalized[key] = "NULL"
         return normalized
 
     def _build_business_key(self, entity: str, row: dict[str, str]) -> str:
@@ -322,46 +527,94 @@ class SpodPipeline:
             "by_entity": {},
         }
 
-        for entity, rows in parsed_rows.items():
-            optional_cfg = self.entities[entity].get("optional_fields", {})
-            if optional_cfg.get("enabled", False):
-                merged_rows, by_business_key_counts = self._merge_entity_with_optional_fields(
-                    entity=entity,
-                    rows=rows,
-                    reference_stand=optional_cfg.get("reference_stand", "PROM"),
-                )
-            else:
-                merged_rows, by_business_key_counts = self._merge_entity_default(entity, rows)
-
-            for item in merged_rows:
-                has_diff_values = by_business_key_counts[item.business_key] > 1
-                item.merged_data["same_key_diff_values_flag"] = "1" if has_diff_values else "0"
-                item.merged_data["same_key_diff_values_note"] = (
-                    "YES" if has_diff_values else "NO"
-                )
-
-            merged_rows.sort(key=lambda item: (item.business_key, item.row_hash))
-            result[entity] = merged_rows
-            entity_equal_all = sum(1 for item in merged_rows if item.is_equal_all)
-            entity_diff = len(merged_rows) - entity_equal_all
-            same_key_different = sum(
-                1 for count in by_business_key_counts.values() if count > 1
-            )
-            stats["by_entity"][entity] = {
-                "merged_rows": len(merged_rows),
-                "equal_all_rows": entity_equal_all,
-                "different_rows": entity_diff,
-                "same_key_different_values": same_key_different,
+        with ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
+            futures = {
+                executor.submit(self._merge_entity_bundle, entity, rows): entity
+                for entity, rows in parsed_rows.items()
             }
-            stats["merged_total"] += len(merged_rows)
-            stats["equal_all_total"] += entity_equal_all
-            stats["different_total"] += entity_diff
-            stats["same_key_different_values_total"] += same_key_different
+            for future in as_completed(futures):
+                entity, merged_rows, by_business_key_counts, extra_fields = future.result()
+                self.entity_extra_fields[entity] = extra_fields
+                result[entity] = merged_rows
+                entity_equal_all = sum(1 for item in merged_rows if item.is_equal_all)
+                entity_diff = len(merged_rows) - entity_equal_all
+                same_key_different = sum(
+                    1 for count in by_business_key_counts.values() if count > 1
+                )
+                stats["by_entity"][entity] = {
+                    "merged_rows": len(merged_rows),
+                    "equal_all_rows": entity_equal_all,
+                    "different_rows": entity_diff,
+                    "same_key_different_values": same_key_different,
+                }
+                stats["merged_total"] += len(merged_rows)
+                stats["equal_all_total"] += entity_equal_all
+                stats["different_total"] += entity_diff
+                stats["same_key_different_values_total"] += same_key_different
         return result, stats
+
+    def _merge_entity_bundle(
+        self, entity: str, rows: list[ParsedRow]
+    ) -> tuple[str, list[MergedRow], dict[str, int], set[str]]:
+        """Мержит одну сущность (изолированный bundle для параллельного вызова)."""
+        optional_cfg = self.entities[entity].get("optional_fields", {})
+        if optional_cfg.get("enabled", False):
+            merged_rows, by_business_key_counts, extra_fields = self._merge_entity_with_optional_fields(
+                entity=entity,
+                rows=rows,
+                reference_stand=optional_cfg.get("reference_stand", "PROM"),
+            )
+        else:
+            merged_rows, by_business_key_counts = self._merge_entity_default(entity, rows)
+            extra_fields = set()
+
+        for item in merged_rows:
+            has_diff_values = by_business_key_counts[item.business_key] > 1
+            item.merged_data["same_key_diff_values_flag"] = "1" if has_diff_values else "0"
+            item.merged_data["same_key_diff_values_note"] = "YES" if has_diff_values else "NO"
+        self._add_diff_diagnostics(merged_rows)
+        merged_rows.sort(key=lambda item: (item.business_key, item.row_hash))
+        return entity, merged_rows, by_business_key_counts, extra_fields
+
+    def _source_row_matches_display_payload(
+        self, display: dict[str, str], source: dict[str, str]
+    ) -> bool:
+        """
+        Проверяет, что в source те же значения по всем колонкам, что выводятся из display (эталон строки).
+        Сравнение ячеек — с усечением пробелов по краям (в CSV часто лишние пробелы).
+        """
+        for key, value in display.items():
+            if source.get(key, "").strip() != str(value).strip():
+                return False
+        return True
+
+    def _collect_stands_matching_display_payload(
+        self,
+        business_key: str,
+        display_payload: dict[str, str],
+        candidates: list[ParsedRow],
+    ) -> list[str]:
+        """
+        Стенды, где для того же business_key в CSV есть строка с тем же набором значений полей,
+        что и отображаемая merged-строка (не «стенд встречается в партиции», а «на этом стенде
+        реально лежат эти значения»).
+        """
+        rank = self._stand_sort_rank()
+        found: set[str] = set()
+        for pr in candidates:
+            if pr.business_key != business_key:
+                continue
+            if self._source_row_matches_display_payload(display_payload, pr.data):
+                found.add(pr.stand)
+        return sorted(found, key=lambda stand: rank.get(stand, 99))
 
     def _merge_entity_default(
         self, entity: str, rows: list[ParsedRow]
     ) -> tuple[list[MergedRow], dict[str, int]]:
+        by_business_key: dict[str, list[ParsedRow]] = defaultdict(list)
+        for row in rows:
+            by_business_key[row.business_key].append(row)
+
         grouped: dict[tuple[str, str], list[ParsedRow]] = defaultdict(list)
         for row in rows:
             grouped[(row.business_key, row.row_hash)].append(row)
@@ -369,40 +622,78 @@ class SpodPipeline:
         merged_rows: list[MergedRow] = []
         by_business_key_counts: dict[str, int] = defaultdict(int)
         for (business_key, row_hash), group_rows in grouped.items():
-            stands = sorted({row.stand for row in group_rows})
-            source_stands = "-".join(stands)
-            source_count = len(stands)
-            by_business_key_counts[business_key] += 1
-            diff_group_key = f"{entity}:{business_key}:{by_business_key_counts[business_key]}"
-            base_data = dict(group_rows[0].data)
-            base_data["source_stands"] = source_stands
-            base_data["source_count"] = str(source_count)
-            base_data["is_equal_all"] = "1" if source_count == len(self.stands) else "0"
-            base_data["diff_group_key"] = diff_group_key
-            merged_rows.append(
-                MergedRow(
-                    entity=entity,
-                    business_key=business_key,
-                    row_hash=row_hash,
-                    source_stands=source_stands,
-                    source_count=source_count,
-                    is_equal_all=source_count == len(self.stands),
-                    diff_group_key=diff_group_key,
-                    merged_data=base_data,
+            # Разделяем по фактическому сырому содержимому строки: один row_hash не должен
+            # склеивать разные наборы полей/значений (защита от коллизий и сбоев выравнивания).
+            raw_partitions: dict[str, list[ParsedRow]] = defaultdict(list)
+            for row in group_rows:
+                raw_partitions[self._raw_row_fingerprint(row.data)].append(row)
+
+            for part in raw_partitions.values():
+                # Эталон для отображаемых значений — выбранный стенд (по умолчанию PROM), если он есть в группе.
+                reference_row = self._pick_reference_parsed_row(part)
+                effective_row_hash = self._hash_json(self._normalize_row(reference_row.data))
+                base_data = dict(reference_row.data)
+                stands = self._collect_stands_matching_display_payload(
+                    business_key, base_data, by_business_key[business_key]
                 )
-            )
+                source_stands = "-".join(stands)
+                source_count = len(stands)
+                by_business_key_counts[business_key] += 1
+                diff_group_key = f"{entity}:{business_key}:{by_business_key_counts[business_key]}"
+                base_data["source_stands"] = source_stands
+                base_data["source_count"] = str(source_count)
+                base_data["is_equal_all"] = "1" if source_count == len(self.stands) else "0"
+                base_data["diff_group_key"] = diff_group_key
+                merged_rows.append(
+                    MergedRow(
+                        entity=entity,
+                        business_key=business_key,
+                        row_hash=effective_row_hash,
+                        source_stands=source_stands,
+                        source_count=source_count,
+                        is_equal_all=source_count == len(self.stands),
+                        diff_group_key=diff_group_key,
+                        merged_data=base_data,
+                    )
+                )
         return merged_rows, by_business_key_counts
+
+    def _raw_row_fingerprint(self, data: dict[str, str]) -> str:
+        """Стабильный отпечаток сырой строки для разделения групп с одинаковым row_hash."""
+        canonical = json.dumps(dict(sorted(data.items())), ensure_ascii=False, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _stand_sort_rank(self) -> dict[str, int]:
+        """Порядок стендов для сортировки source_stands (эталонный стенд — первый)."""
+        merge_cfg = self.config.get("merge", {})
+        preferred = str(merge_cfg.get("reference_row_stand", "PROM"))
+        order: list[str] = []
+        if preferred in self.stands:
+            order.append(preferred)
+        for stand in self.stands:
+            if stand not in order:
+                order.append(stand)
+        return {stand: idx for idx, stand in enumerate(order)}
+
+    def _pick_reference_parsed_row(self, rows: list[ParsedRow]) -> ParsedRow:
+        """Выбирает строку-эталон для вывода значений в merged-строке."""
+        merge_cfg = self.config.get("merge", {})
+        preferred = str(merge_cfg.get("reference_row_stand", "PROM"))
+        rank = self._stand_sort_rank()
+        preferred_rows = [row for row in rows if row.stand == preferred]
+        if preferred_rows:
+            return preferred_rows[0]
+        return min(rows, key=lambda row: rank.get(row.stand, 999))
 
     def _merge_entity_with_optional_fields(
         self, entity: str, rows: list[ParsedRow], reference_stand: str
-    ) -> tuple[list[MergedRow], dict[str, int]]:
+    ) -> tuple[list[MergedRow], dict[str, int], set[str]]:
         field_orders = self.entity_field_orders.get(entity, {})
         reference_fields = set(field_orders.get(reference_stand, []))
         all_fields = set()
         for stand_fields in field_orders.values():
             all_fields.update(stand_fields)
         extra_fields = all_fields - reference_fields
-        self.entity_extra_fields[entity] = set(extra_fields)
         non_extra_fields = [field for field in all_fields if field not in extra_fields]
 
         by_key_rows: dict[str, list[ParsedRow]] = defaultdict(list)
@@ -434,11 +725,14 @@ class SpodPipeline:
 
             for cluster_rows in clusters:
                 by_business_key_counts[business_key] += 1
-                stands = sorted({row.stand for row in cluster_rows})
+                reference_row = self._pick_reference_parsed_row(cluster_rows)
+                base_data = dict(reference_row.data)
+                stands = self._collect_stands_matching_display_payload(
+                    business_key, base_data, key_rows
+                )
                 source_stands = "-".join(stands)
                 source_count = len(stands)
                 diff_group_key = f"{entity}:{business_key}:{by_business_key_counts[business_key]}"
-                base_data = dict(cluster_rows[0].data)
                 base_data["source_stands"] = source_stands
                 base_data["source_count"] = str(source_count)
                 base_data["is_equal_all"] = "1" if source_count == len(self.stands) else "0"
@@ -455,7 +749,7 @@ class SpodPipeline:
                         merged_data=base_data,
                     )
                 )
-        return merged_rows, by_business_key_counts
+        return merged_rows, by_business_key_counts, set(extra_fields)
 
     def _row_compatible_with_cluster(
         self,
@@ -489,8 +783,87 @@ class SpodPipeline:
                 return False
         return True
 
+    def _add_diff_diagnostics(self, merged_rows: list[MergedRow]) -> None:
+        """Добавляет в merged-данные колонки с детализацией отличий по одинаковому ключу."""
+        by_key_rows: dict[str, list[MergedRow]] = defaultdict(list)
+        service_fields = set(self.config["excel"]["formatting_defaults"].get("service_fields", []))
+        service_fields.update({"diff_columns", "diff_positions", "diff_snippets"})
+        for row in merged_rows:
+            by_key_rows[row.business_key].append(row)
+
+        for key, rows in by_key_rows.items():
+            if len(rows) <= 1:
+                for row in rows:
+                    row.merged_data["diff_columns"] = ""
+                    row.merged_data["diff_positions"] = ""
+                    row.merged_data["diff_snippets"] = ""
+                continue
+
+            compare_columns = self._find_diff_columns(rows, service_fields)
+            diff_positions, diff_snippets = self._build_diff_details(rows, compare_columns)
+            for row in rows:
+                row.merged_data["diff_columns"] = ",".join(compare_columns)
+                row.merged_data["diff_positions"] = diff_positions
+                row.merged_data["diff_snippets"] = diff_snippets
+
+    def _find_diff_columns(
+        self, rows: list[MergedRow], excluded_columns: set[str]
+    ) -> list[str]:
+        """Возвращает колонки, в которых есть хотя бы два разных значения."""
+        columns: set[str] = set()
+        for row in rows:
+            columns.update(row.merged_data.keys())
+        diff_columns: list[str] = []
+        for col in sorted(columns):
+            if col in excluded_columns:
+                continue
+            values = {row.merged_data.get(col, "") for row in rows}
+            if len(values) > 1:
+                diff_columns.append(col)
+        return diff_columns
+
+    def _build_diff_details(
+        self, rows: list[MergedRow], diff_columns: list[str]
+    ) -> tuple[str, str]:
+        """Возвращает строку позиций отличий и короткие фрагменты."""
+        if len(rows) < 2 or not diff_columns:
+            return "", ""
+        diagnostics_cfg = self.config.get("excel", {}).get("diff_report_sheet", {})
+        left_context = int(diagnostics_cfg.get("left_context_chars", 10))
+        right_context = int(diagnostics_cfg.get("right_context_chars", 20))
+        left = rows[0].merged_data
+        right = rows[1].merged_data
+        positions: list[str] = []
+        snippets: list[str] = []
+        for col in diff_columns:
+            left_val = str(left.get(col, ""))
+            right_val = str(right.get(col, ""))
+            pos = self._first_diff_pos(left_val, right_val)
+            positions.append(f"{col}:{pos}")
+            left_part = left_val[max(0, pos - left_context) : pos + right_context]
+            right_part = right_val[max(0, pos - left_context) : pos + right_context]
+            snippets.append(f"{col} => [{left_part}] != [{right_part}]")
+        return " | ".join(positions), " | ".join(snippets)
+
+    def _first_diff_pos(self, left: str, right: str) -> int:
+        """Находит позицию первого отличия двух строк (0-based)."""
+        min_len = min(len(left), len(right))
+        for idx in range(min_len):
+            if left[idx] != right[idx]:
+                return idx
+        return min_len
+
     def _export_excel(self, merged: dict[str, list[MergedRow]]) -> Path:
         """Создает Excel-файл: 1 лист на сущность + служебные колонки."""
+        output_prefix = self.config["excel"]["output_name_prefix"]
+        timestamp_format = self.config["excel"]["output_timestamp_format"]
+        timestamp_value = datetime.now().strftime(timestamp_format)
+        file_name = f"{output_prefix}_{timestamp_value}.xlsx"
+        excel_path = self.paths["output_excel_dir"] / file_name
+        if self.dry_run:
+            self.logger.info("Dry-run: формирование Excel пропущено, целевой путь=%s", excel_path)
+            return excel_path
+
         workbook = Workbook()
         workbook.remove(workbook.active)
 
@@ -535,14 +908,54 @@ class SpodPipeline:
             )
             summary.append([entity, len(rows), equal_all, len(rows) - equal_all])
 
-        output_prefix = self.config["excel"]["output_name_prefix"]
-        timestamp_format = self.config["excel"]["output_timestamp_format"]
-        timestamp_value = datetime.now().strftime(timestamp_format)
-        file_name = f"{output_prefix}_{timestamp_value}.xlsx"
-        excel_path = self.paths["output_excel_dir"] / file_name
+        if self.config["excel"].get("diff_report_sheet", {}).get("enabled", True):
+            self._append_diff_report_sheet(workbook, merged)
+
         workbook.save(excel_path)
         self.logger.info("Excel сформирован: %s", excel_path)
         return excel_path
+
+    def _append_diff_report_sheet(
+        self, workbook: Workbook, merged: dict[str, list[MergedRow]]
+    ) -> None:
+        """Добавляет лист со сводкой конфликтов между стендами."""
+        sheet_cfg = self.config["excel"].get(
+            "diff_report_sheet",
+            {"name": "DIFF_REPORT", "freeze_panes": "A2", "auto_filter_header": True},
+        )
+        sheet_name = sheet_cfg.get("name", "DIFF_REPORT")
+        sheet = workbook.create_sheet(sheet_name)
+        headers = [
+            "entity",
+            "business_key",
+            "source_stands",
+            "diff_columns",
+            "diff_positions",
+            "diff_snippets",
+        ]
+        sheet.append(headers)
+        for entity, rows in merged.items():
+            for item in rows:
+                if item.merged_data.get("same_key_diff_values_flag", "0") != "1":
+                    continue
+                sheet.append(
+                    [
+                        entity,
+                        item.business_key,
+                        item.source_stands,
+                        item.merged_data.get("diff_columns", ""),
+                        item.merged_data.get("diff_positions", ""),
+                        item.merged_data.get("diff_snippets", ""),
+                    ]
+                )
+        self._apply_sheet_layout(sheet, sheet_cfg, len(headers))
+        self._format_sheet(
+            sheet,
+            base_headers=headers,
+            sheet_config=sheet_cfg,
+            is_entity_sheet=False,
+            entity_name=None,
+        )
 
     def _build_entity_headers(self, entity: str, rows: list[MergedRow]) -> list[str]:
         """Строит порядок колонок: эталон PROM + доп.поля в местах появления."""
@@ -829,4 +1242,13 @@ class SpodPipeline:
                 item["different_rows"],
                 item["same_key_different_values"],
             )
+
+    def _log_stage_timings(self, stage_timings: dict[str, float], run_started: float) -> None:
+        """Логирует профилирование этапов выполнения пайплайна."""
+        if not stage_timings:
+            return
+        self.logger.info("Профилирование этапов (секунды):")
+        for stage_name in sorted(stage_timings.keys()):
+            self.logger.info(" - %s: %.3f", stage_name, stage_timings[stage_name])
+        self.logger.info(" - total_run: %.3f", time.perf_counter() - run_started)
 
