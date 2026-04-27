@@ -166,7 +166,9 @@
         "same_key_diff_values_note",
         "diff_columns",
         "diff_positions",
-        "diff_snippets"
+        "diff_snippets",
+        "CONSIST_ROW_DETAIL",
+        "CONSIST_ALL_STAND_ISSUES"
       ],
       "borders": {
         "color": "666666",
@@ -189,6 +191,142 @@
       "left_context_chars": 10,
       "right_context_chars": 20
     }
+  },
+  "consistency_checks": {
+    "enabled": true,
+    "fail_fast": false,
+    "summary_sheet_name": "CONSISTENCY",
+    "csv_columns_count": {
+      "entities": {},
+      "output": {
+        "column_suffix_per_stand": "CC_CSV_COLS_S"
+      }
+    },
+    "rules": [
+      {
+        "id": "uniq_group_key",
+        "type": "unique",
+        "entity": "GROUP",
+        "enabled": false,
+        "scope": "both",
+        "use_business_key": true,
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_GROUP_S",
+          "column_suffix_merged": "CC_UNIQ_GROUP_M"
+        }
+      },
+      {
+        "id": "len_reward_code",
+        "type": "field_length",
+        "entity": "REWARD",
+        "enabled": true,
+        "scope": "per_stand",
+        "fields": {
+          "REWARD_CODE": { "limit": 128, "operator": "<=" }
+        },
+        "output": { "column_suffix_per_stand": "CC_LEN_REWARD_S" }
+      },
+      {
+        "id": "fmt_contest_create_dt",
+        "type": "field_format",
+        "entity": "CONTEST",
+        "enabled": true,
+        "scope": "per_stand",
+        "column": "CREATE_DT",
+        "format_type": "date",
+        "params": { "strftime": "%Y-%m-%d" },
+        "output": { "column_suffix_per_stand": "CC_DT_CREATE_S" }
+      },
+      {
+        "id": "ref_link_to_reward",
+        "type": "referential",
+        "entity": "REWARD-LINK",
+        "enabled": false,
+        "scope": "merged",
+        "source_column": "REWARD_CODE",
+        "target_entity": "REWARD",
+        "target_key_columns": ["REWARD_CODE"],
+        "output": { "column_suffix_merged": "CC_REF_RL_RW_M" }
+      },
+      {
+        "id": "ref_group_to_contest",
+        "type": "referential",
+        "entity": "GROUP",
+        "enabled": false,
+        "scope": "both",
+        "source_column": "CONTEST_CODE",
+        "target_entity": "CONTEST",
+        "target_key_columns": ["CONTEST_CODE"],
+        "output": {
+          "column_suffix_per_stand": "CC_REF_GRP_CT_S",
+          "column_suffix_merged": "CC_REF_GRP_CT_M"
+        }
+      },
+      {
+        "id": "ref_composite_example",
+        "type": "referential_composite",
+        "entity": "REWARD-LINK",
+        "enabled": false,
+        "scope": "per_stand",
+        "source_columns": ["CONTEST_CODE", "GROUP_CODE", "REWARD_CODE"],
+        "target_entity": "REWARD-LINK",
+        "target_key_columns": ["CONTEST_CODE", "GROUP_CODE", "REWARD_CODE"],
+        "output": { "column_suffix_per_stand": "CC_REF_SELF_S" }
+      },
+      {
+        "id": "cross_dt_create_lte_today",
+        "type": "cross_sheet_date_lte_today",
+        "entity": "CONTEST",
+        "enabled": true,
+        "scope": "per_stand",
+        "column": "CREATE_DT",
+        "date_format": "%Y-%m-%d",
+        "output": { "column_suffix_per_stand": "CC_DT_LTE_S" }
+      },
+      {
+        "id": "json_contest_feature",
+        "type": "json_spod_format",
+        "entity": "CONTEST",
+        "enabled": true,
+        "scope": "per_stand",
+        "json_column": "CONTEST_FEATURE",
+        "json_required": false,
+        "output": { "column_suffix_per_stand": "CC_JSON_FEAT_S" }
+      },
+      {
+        "id": "json_equals_vid",
+        "type": "json_field_equals_column",
+        "entity": "CONTEST",
+        "enabled": false,
+        "scope": "per_stand",
+        "json_column": "CONTEST_FEATURE",
+        "json_path": "vid",
+        "compare_column": "CONTEST_TYPE",
+        "output": { "column_suffix_per_stand": "CC_JSON_EQ_S" }
+      },
+      {
+        "id": "json_in_product",
+        "type": "json_field_in_column",
+        "entity": "CONTEST",
+        "enabled": false,
+        "scope": "per_stand",
+        "json_column": "CONTEST_FEATURE",
+        "json_path": "vid",
+        "values_column": "PRODUCT",
+        "values_separator": ";",
+        "output": { "column_suffix_per_stand": "CC_JSON_IN_S" }
+      },
+      {
+        "id": "json_priority_unique",
+        "type": "json_priority_unique_per_contest_link",
+        "entity": "REWARD",
+        "enabled": false,
+        "scope": "per_stand",
+        "json_column": "REWARD_ADD_DATA",
+        "json_path": "priority",
+        "output": { "column_suffix_per_stand": "CC_JSON_PRI_S" }
+      }
+    ]
   },
   "sqlite": {
     "db_name": "spod_export.db",

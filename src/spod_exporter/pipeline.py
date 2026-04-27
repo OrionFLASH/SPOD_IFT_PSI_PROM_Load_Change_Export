@@ -14,6 +14,7 @@ from typing import Any
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
+from .consistency_checks import append_consistency_sheet, execute_consistency_checks
 from .logging_setup import debug_extra
 from .models import FileDescriptor, MergedRow, ParsedRow
 
@@ -41,6 +42,7 @@ class SpodPipeline:
 
         self.paths["output_excel_dir"].mkdir(parents=True, exist_ok=True)
         self.paths["output_db_dir"].mkdir(parents=True, exist_ok=True)
+        self._consistency_violations: list[Any] = []
 
         db_name: str = config["sqlite"]["db_name"]
         self.db_path: Path = self.paths["output_db_dir"] / db_name
@@ -78,6 +80,9 @@ class SpodPipeline:
             merged, merge_stats = self._merge_rows(parsed)
             stage_timings["merge_rows"] = time.perf_counter() - stage_start
             self._log_merge_summary(merge_stats)
+            stage_start = time.perf_counter()
+            self._run_consistency_checks(parsed, merged)
+            stage_timings["consistency_checks"] = time.perf_counter() - stage_start
             stage_start = time.perf_counter()
             self._save_merged_rows(conn, merged)
             stage_timings["save_merged_rows"] = time.perf_counter() - stage_start
@@ -553,6 +558,30 @@ class SpodPipeline:
                 stats["same_key_different_values_total"] += same_key_different
         return result, stats
 
+    def _run_consistency_checks(
+        self,
+        parsed: dict[str, list[ParsedRow]],
+        merged: dict[str, list[MergedRow]],
+    ) -> None:
+        """Запускает проверки консистентности из config.json; дополняет merged_data и список нарушений."""
+        self._consistency_violations = []
+        cc = self.config.get("consistency_checks") or {}
+        if not cc.get("enabled", False):
+            return
+        field_orders: dict[str, dict[str, list[str]]] = {
+            ent: dict(st_map) for ent, st_map in self.entity_field_orders.items()
+        }
+        res = execute_consistency_checks(
+            config=self.config,
+            stands=list(self.stands),
+            entities=self.entities,
+            parsed_by_entity=parsed,
+            merged_by_entity=merged,
+            field_orders=field_orders,
+            logger=self.logger,
+        )
+        self._consistency_violations = res.violations
+
     def _merge_entity_bundle(
         self, entity: str, rows: list[ParsedRow]
     ) -> tuple[str, list[MergedRow], dict[str, int], set[str]]:
@@ -911,6 +940,10 @@ class SpodPipeline:
         if self.config["excel"].get("diff_report_sheet", {}).get("enabled", True):
             self._append_diff_report_sheet(workbook, merged)
 
+        cc = self.config.get("consistency_checks") or {}
+        if cc.get("enabled", False):
+            append_consistency_sheet(workbook, cc, self._consistency_violations)
+
         workbook.save(excel_path)
         self.logger.info("Excel сформирован: %s", excel_path)
         return excel_path
@@ -981,6 +1014,15 @@ class SpodPipeline:
         for service_field in present_service:
             if service_field not in combined_headers:
                 combined_headers.append(service_field)
+
+        consistency_keys: set[str] = set()
+        for row in rows:
+            for k in row.merged_data.keys():
+                if k.startswith("CONSIST") or k.startswith("CC_"):
+                    consistency_keys.add(k)
+        for ck in sorted(consistency_keys):
+            if ck not in combined_headers:
+                combined_headers.append(ck)
         return combined_headers
 
     def _apply_sheet_layout(
@@ -1070,6 +1112,9 @@ class SpodPipeline:
         )
         service_separator_edge = borders_cfg.get("service_separator_side", "top")
         service_fields = set(sheet_formatting.get("service_fields", []))
+        for name in base_headers:
+            if name.startswith("CC_") or name.startswith("CONSIST"):
+                service_fields.add(name)
         service_column_indexes = {
             idx + 1 for idx, name in enumerate(base_headers) if name in service_fields
         }

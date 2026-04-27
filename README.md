@@ -98,7 +98,8 @@
    - Листы:
      - `SUMMARY`;
      - по одному листу на каждую сущность (`CONTEST`, `EMPLOYEE`, ...);
-     - при `excel.diff_report_sheet.enabled=true` — лист **`DIFF_REPORT`** (сводка конфликтов).
+     - при `excel.diff_report_sheet.enabled=true` — лист **`DIFF_REPORT`** (сводка конфликтов);
+     - при `consistency_checks.enabled=true` — лист **`CONSISTENCY`** (таблица нарушений) и при необходимости колонки на листах сущностей (`CONSIST_*`, `CC_*` — см. раздел **`consistency_checks`** в конфиге).
    - Добавляются служебные колонки (полный перечень задаётся в `config.json`, в т.ч.):
      - `source_stands`;
      - `source_count`;
@@ -106,7 +107,8 @@
      - `diff_group_key`;
      - `same_key_diff_values_flag`;
      - `same_key_diff_values_note`;
-     - при необходимости — `diff_columns`, `diff_positions`, `diff_snippets`.
+     - при необходимости — `diff_columns`, `diff_positions`, `diff_snippets`;
+     - при включённых проверках консистентности — `CONSIST_ROW_DETAIL`, `CONSIST_ALL_STAND_ISSUES` и колонки по правилам (`CC_*`).
    - Применяется форматирование из `config.json`:
      - `freeze_panes`, `auto_filter_header`;
      - автоподбор ширины с ограничением;
@@ -191,6 +193,8 @@
   - Объединение строк между стендами.
 - `_export_excel(merged) -> Path`
   - Запись Excel-файла с листами и summary.
+- `_run_consistency_checks(parsed, merged) -> None`
+  - Запуск `consistency_checks` из конфига после merge (профилирование: `consistency_checks` в логах этапов).
 
 ## Ключи сущностей (по умолчанию в `config.json`)
 
@@ -224,6 +228,17 @@
   - `reference_row_stand` (по умолчанию `PROM`) — в вывод подставляются значения полей с этого стенда; **`source_stands`** — стенды, у которых для того же `business_key` в файле строка **полностью совпадает** с этой выведенной строкой по всем полям (при коллизии `row_hash` разное сырое содержимое разделяется на отдельные merged-строки).
 - `logging` — тема логирования;
 - `runtime` — режим выполнения: `dry_run`, `parallel_workers` (`"auto"` или число), при необходимости `fail_fast`, `max_errors`.
+- **`consistency_checks`** (по образцу [SPOD_PARCE_LOAD](https://github.com/OrionFLASH/SPOD_PARCE_LOAD)) — построчные и сводные проверки после merge:
+  - `enabled` — включить этап; `fail_fast` — прервать запуск при первой ошибке с `severity=error`;
+  - `summary_sheet_name` — имя листа сводки (по умолчанию `CONSISTENCY`);
+  - **`csv_columns_count`** — ожидаемое число колонок по сущности (`entities.<ENTITY>.expected_columns`, значение **`0`** = эталон как максимум числа колонок заголовка по стендам); блок **`output.column_suffix_per_stand`** — имя колонки статуса на листе сущности;
+  - **`rules`** — массив правил с полями `id`, `type`, `entity`, `enabled`, **`scope`**: `per_stand` | `merged` | `both` (при `both` проверка выполняется и по сырым строкам стенда, и по merged; в Excel могут быть две колонки через `output.column_suffix_per_stand` / `column_suffix_merged`);
+  - поддерживаемые **`type`**: `unique`, `field_length`, `field_format` (подтипы `date`, `decimal`, `fixed_length_digits`), `referential`, `referential_composite`, `cross_sheet_date_lte_today`, `json_spod_format`, `json_field_equals_column`, `json_field_in_column`, `json_priority_unique_per_contest_link`.
+
+### `src/spod_exporter/consistency_checks.py`
+
+- `execute_consistency_checks(...)` — запуск правил; дополняет `MergedRow.merged_data` агрегатами по ключу.
+- `append_consistency_sheet(workbook, cc, violations)` — добавляет лист сводки в книгу Excel.
 
 ## Формат логирования
 
@@ -250,17 +265,19 @@ DEBUG-строка:
 ## Тесты
 
 - Запуск unit-тестов: `python3 -m unittest discover -s src/Tests -p "test_*.py"`
-- Файл: `src/Tests/test_pipeline.py` (класс `TestSpodPipeline`).
+- Файлы: `src/Tests/test_pipeline.py` (`TestSpodPipeline`), `src/Tests/test_consistency_checks.py` (`TestConsistencyChecks`).
 - Покрытие на текущий момент:
   - **[сделано]** формирование `business_key` для сущности `GROUP`;
   - **[сделано]** fallback-ключ `HASH:*` при пустых полях ключа для `CONTEST`;
-  - **[сделано]** объединение `GROUP` при одинаковом `row_hash` и разном сыром содержимом (две строки, эталон значений — `PROM`).
+  - **[сделано]** объединение `GROUP` при одинаковом `row_hash` и разном сыром содержимом (две строки, эталон значений — `PROM`);
+  - **[сделано]** базовые сценарии `consistency_checks` (число колонок, уникальность, формат, ссылка, `fail_fast`).
 - Интеграционные и регрессионные сценарии (S0–S4) описаны в `Docs/TestReports/test_plan_detailed.md`; последние результаты — в `Docs/TestReports/test_results_regression_latest.md`.
 
 ## История версий
 
 ### v0.2.0 (текущая ветка развития)
 
+- **[сделано]** Проверки консистентности: раздел `consistency_checks` в `config.json`, модуль `consistency_checks.py`, лист **`CONSISTENCY`**, колонки на листах сущностей, интеграция в пайплайн.
 - **[сделано]** Лист Excel `DIFF_REPORT` и настройка `excel.diff_report_sheet` в `config.json`.
 - **[сделано]** Расширенный набор служебных полей (`diff_columns`, `diff_positions`, `diff_snippets` и др. по конфигу).
 - **[сделано]** Параллельная обработка файлов/сущностей с авто-числом потоков или явным `--parallel-workers`.
