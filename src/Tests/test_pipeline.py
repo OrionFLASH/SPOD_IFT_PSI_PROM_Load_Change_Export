@@ -18,9 +18,20 @@ def _build_pipeline() -> SpodPipeline:
         },
         "stands": ["IFT", "PROM", "PSI"],
         "entities": {
-            "CONTEST": {"file_prefix": "CONTEST", "business_key": ["CONTEST_CODE"]},
+            "CONTEST": {
+                "file_names": {
+                    "IFT": "contest_ift.csv",
+                    "PROM": "contest_prom.csv",
+                    "PSI": "contest_psi.csv",
+                },
+                "business_key": ["CONTEST_CODE"],
+            },
             "GROUP": {
-                "file_prefix": "GROUP",
+                "file_names": {
+                    "IFT": "group_ift.csv",
+                    "PROM": "group_prom.csv",
+                    "PSI": "group_psi.csv",
+                },
                 "business_key": ["CONTEST_CODE", "GROUP_CODE", "GROUP_VALUE"],
             },
         },

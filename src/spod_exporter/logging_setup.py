@@ -46,6 +46,12 @@ def setup_logging(log_dir: Path, topic: str) -> tuple[logging.Logger, Path, Path
 
     logger.addHandler(info_handler)
     logger.addHandler(debug_handler)
+
+    # Дублируем INFO-события в консоль для удобного контроля процесса.
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+    logger.addHandler(console_handler)
     return logger, info_path, debug_path
 
 

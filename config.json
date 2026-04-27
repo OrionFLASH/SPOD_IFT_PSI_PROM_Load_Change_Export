@@ -8,54 +8,148 @@
   "stands": ["IFT", "PROM", "PSI"],
   "entities": {
     "CONTEST": {
-      "file_prefix": "CONTEST",
+      "file_names": {
+        "IFT": "CONTEST (PROM) 22-04 v0.csv",
+        "PROM": "CONTEST (PROM) 22-04 v0.csv",
+        "PSI": "CONTEST (PROM) 22-04 v0.csv"
+      },
+      "excel_sheet": {
+        "freeze_panes": "B2",
+        "auto_filter_header": true
+      },
       "business_key": ["CONTEST_CODE"]
     },
     "EMPLOYEE": {
-      "file_prefix": "EMPLOYEE",
+      "file_names": {
+        "IFT": "EMPLOYEE (PROM) 22-04 v0.csv",
+        "PROM": "EMPLOYEE (PROM) 22-04 v0.csv",
+        "PSI": "EMPLOYEE (PROM) 22-04 v0.csv"
+      },
+      "excel_sheet": {
+        "freeze_panes": "B2",
+        "auto_filter_header": true
+      },
       "business_key": ["PERSON_NUMBER"]
     },
     "GROUP": {
-      "file_prefix": "GROUP",
+      "file_names": {
+        "IFT": "GROUP (PROM) 17-04 v0.csv",
+        "PROM": "GROUP (PROM) 17-04 v0.csv",
+        "PSI": "GROUP (PROM) 17-04 v0.csv"
+      },
+      "excel_sheet": {
+        "freeze_panes": "B2",
+        "auto_filter_header": true
+      },
       "business_key": ["CONTEST_CODE", "GROUP_CODE", "GROUP_VALUE"]
     },
     "INDICATOR": {
-      "file_prefix": "INDICATOR",
-      "business_key": ["CONTEST_CODE", "INDICATOR_CODE", "N"]
+      "file_names": {
+        "IFT": "INDICATOR (PROM) 22-04 v1.csv",
+        "PROM": "INDICATOR (PROM) 22-04 v1.csv",
+        "PSI": "INDICATOR (PROM) 22-04 v1.csv"
+      },
+      "excel_sheet": {
+        "freeze_panes": "B2",
+        "auto_filter_header": true
+      },
+      "business_key": ["CONTEST_CODE", "INDICATOR_ADD_CALC_TYPE" ,"INDICATOR_CODE", "N"]
     },
     "ORG_UNIT_V20": {
-      "file_prefix": "ORG_UNIT_V20",
+      "file_names": {
+        "IFT": "ORG_UNIT_V20 20-03 v0.csv",
+        "PROM": "ORG_UNIT_V20 20-03 v0.csv",
+        "PSI": "ORG_UNIT_V20 20-03 v0.csv"
+      },
+      "excel_sheet": {
+        "freeze_panes": "B2",
+        "auto_filter_header": true
+      },
       "business_key": ["ORG_UNIT_CODE"]
     },
     "REPORT": {
-      "file_prefix": "REPORT",
+      "file_names": {
+        "IFT": "REPORT (PROM) 24-04 v0.csv",
+        "PROM": "REPORT (PROM) 24-04 v0.csv",
+        "PSI": "REPORT (PROM) 24-04 v0.csv"
+      },
+      "excel_sheet": {
+        "freeze_panes": "B2",
+        "auto_filter_header": true
+      },
       "business_key": [
         "MANAGER_PERSON_NUMBER",
         "CONTEST_CODE",
-        "TOURNAMENT_CODE",
-        "CONTEST_DATE"
+        "TOURNAMENT_CODE"
       ]
     },
     "REWARD": {
-      "file_prefix": "REWARD",
+      "file_names": {
+        "IFT": "REWARD (PROM) 24-04 v1.csv",
+        "PROM": "REWARD (PROM) 24-04 v1.csv",
+        "PSI": "REWARD (PROM) 24-04 v1.csv"
+      },
+      "excel_sheet": {
+        "freeze_panes": "B2",
+        "auto_filter_header": true
+      },
       "business_key": ["REWARD_CODE"]
     },
     "REWARD-LINK": {
-      "file_prefix": "REWARD-LINK",
+      "file_names": {
+        "IFT": "REWARD-LINK (PROM) 17-04 v0.csv",
+        "PROM": "REWARD-LINK (PROM) 17-04 v0.csv",
+        "PSI": "REWARD-LINK (PROM) 17-04 v0.csv"
+      },
+      "excel_sheet": {
+        "freeze_panes": "B2",
+        "auto_filter_header": true
+      },
       "business_key": ["CONTEST_CODE", "GROUP_CODE", "REWARD_CODE"]
     },
     "SCHEDULE": {
-      "file_prefix": "SCHEDULE",
+      "file_names": {
+        "IFT": "SCHEDULE (PROM) 27-04 v0.csv",
+        "PROM": "SCHEDULE (PROM) 27-04 v0.csv",
+        "PSI": "SCHEDULE (PROM) 27-04 v0.csv"
+      },
+      "excel_sheet": {
+        "freeze_panes": "B2",
+        "auto_filter_header": true
+      },
       "business_key": ["TOURNAMENT_CODE"]
     },
     "USER_ROLE": {
-      "file_prefix": "USER_ROLE",
+      "file_names": {
+        "IFT": "USER_ROLE (PROM) 20-04 v0.csv",
+        "PROM": "USER_ROLE (PROM) 20-04 v0.csv",
+        "PSI": "USER_ROLE (PROM) 20-04 v0.csv"
+      },
+      "excel_sheet": {
+        "freeze_panes": "B2",
+        "auto_filter_header": true
+      },
       "business_key": ["RULE_NUM"]
     }
   },
   "excel": {
     "one_sheet_per_entity": true,
-    "output_name_pattern": "SPOD_Export_%Y%m%d_%H%M%S.xlsx"
+    "output_name_pattern": "SPOD_Export_%Y%m%d_%H%M%S.xlsx",
+    "formatting_defaults": {
+      "max_column_width": 150,
+      "wrap_text_all_cells": true,
+      "header_bold": true,
+      "header_horizontal": "center",
+      "header_vertical": "center",
+      "data_horizontal": "left",
+      "data_vertical": "center",
+      "missing_prom_fill": "FFFDE9",
+      "same_key_diff_fill": "FDE9E9"
+    },
+    "summary_sheet": {
+      "freeze_panes": "B2",
+      "auto_filter_header": true
+    }
   },
   "sqlite": {
     "db_name": "spod_export.db",
