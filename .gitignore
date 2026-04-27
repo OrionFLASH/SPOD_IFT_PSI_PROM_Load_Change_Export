@@ -10,3 +10,16 @@ OUT/**/*
 
 # Полностью игнорируем Example внутри Docs
 Docs/Example/
+
+# Логи
+log/**/*
+!log/**/
+!log/**/.gitkeep
+
+# Секреты и окружение
+.env
+.venv/
+
+# Временные файлы Python
+__pycache__/
+*.pyc

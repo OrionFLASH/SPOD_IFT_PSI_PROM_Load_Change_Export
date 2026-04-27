@@ -1,0 +1,78 @@
+{
+  "paths": {
+    "input_root": "IN/SPOD",
+    "output_excel_dir": "OUT/CSV",
+    "output_db_dir": "OUT/DB",
+    "log_dir": "log"
+  },
+  "stands": ["IFT", "PROM", "PSI"],
+  "entities": {
+    "CONTEST": {
+      "file_prefix": "CONTEST",
+      "business_key": ["CONTEST_CODE"]
+    },
+    "EMPLOYEE": {
+      "file_prefix": "EMPLOYEE",
+      "business_key": ["PERSON_NUMBER"]
+    },
+    "GROUP": {
+      "file_prefix": "GROUP",
+      "business_key": ["CONTEST_CODE", "GROUP_CODE", "GROUP_VALUE"]
+    },
+    "INDICATOR": {
+      "file_prefix": "INDICATOR",
+      "business_key": ["CONTEST_CODE", "INDICATOR_CODE", "N"]
+    },
+    "ORG_UNIT_V20": {
+      "file_prefix": "ORG_UNIT_V20",
+      "business_key": ["ORG_UNIT_CODE"]
+    },
+    "REPORT": {
+      "file_prefix": "REPORT",
+      "business_key": [
+        "MANAGER_PERSON_NUMBER",
+        "CONTEST_CODE",
+        "TOURNAMENT_CODE",
+        "CONTEST_DATE"
+      ]
+    },
+    "REWARD": {
+      "file_prefix": "REWARD",
+      "business_key": ["REWARD_CODE"]
+    },
+    "REWARD-LINK": {
+      "file_prefix": "REWARD-LINK",
+      "business_key": ["CONTEST_CODE", "GROUP_CODE", "REWARD_CODE"]
+    },
+    "SCHEDULE": {
+      "file_prefix": "SCHEDULE",
+      "business_key": ["TOURNAMENT_CODE"]
+    },
+    "USER_ROLE": {
+      "file_prefix": "USER_ROLE",
+      "business_key": ["RULE_NUM"]
+    }
+  },
+  "excel": {
+    "one_sheet_per_entity": true,
+    "output_name_pattern": "SPOD_Export_%Y%m%d_%H%M%S.xlsx"
+  },
+  "sqlite": {
+    "db_name": "spod_export.db",
+    "dedup_mode": "sha256"
+  },
+  "merge": {
+    "trim_values": true,
+    "empty_to_null": false,
+    "compare_strategy": "full_row_hash"
+  },
+  "logging": {
+    "topic": "spod_export"
+  },
+  "runtime": {
+    "fail_fast": true,
+    "max_errors": 20,
+    "dry_run": false
+  }
+}
+
