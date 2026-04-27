@@ -1,0 +1,57 @@
+[
+  {
+    "id": "S0_BASELINE",
+    "success": true,
+    "details": {
+      "found_files": 30,
+      "processed_files": 30,
+      "processed_rows": 73346,
+      "differences": 162,
+      "same_key_diff": 19,
+      "excel": "OUT/XLS/SPOD_Export_20260427_235633.xlsx"
+    }
+  },
+  {
+    "id": "S0_QUOTE_PRESERVATION",
+    "success": false,
+    "details": {
+      "expected_prefix": "",
+      "actual_prefix": "",
+      "equal": false
+    }
+  },
+  {
+    "id": "S1_PRECHECK_MISSING_FILE",
+    "success": true,
+    "details": {
+      "returncode": 1,
+      "contains_expected_error": true
+    }
+  },
+  {
+    "id": "S2_NON_OPTIONAL_DIFFERENCE_DETECTED",
+    "success": true,
+    "details": {
+      "returncode": 0,
+      "same_key_diff": 19
+    }
+  },
+  {
+    "id": "S3_OPTIONAL_FIELD_ONE_STAND_IGNORED",
+    "success": true,
+    "details": {
+      "returncode": 0,
+      "employee_different": 0,
+      "employee_same_key_diff": 0
+    }
+  },
+  {
+    "id": "S4_OPTIONAL_FIELD_TWO_STANDS_CONFLICT",
+    "success": true,
+    "details": {
+      "returncode": 0,
+      "employee_different": 2,
+      "employee_same_key_diff": 1
+    }
+  }
+]

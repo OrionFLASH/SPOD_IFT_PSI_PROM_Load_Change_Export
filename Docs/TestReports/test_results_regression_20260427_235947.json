@@ -1,0 +1,49 @@
+[
+  {
+    "id": "S0_BASELINE",
+    "success": true,
+    "details": {
+      "found_files": 30,
+      "processed_files": 30,
+      "processed_rows": 73346,
+      "same_key_diff": 19
+    }
+  },
+  {
+    "id": "S0_QUOTE_PRESERVATION",
+    "success": false,
+    "details": {
+      "equal": false,
+      "expected_prefix": "\"[{\"\"\"period_code\"\"\": 1, \"\"\"criterion_mark_type\"\"\": \"\"\">\"\"\", \"\"\"criterion_mark_value\"\"\": 0, \"\"\"start_dt\"\"\": \"\"\"2023-06-0",
+      "actual_prefix": ""
+    }
+  },
+  {
+    "id": "S1_PRECHECK_MISSING_FILE",
+    "success": true,
+    "details": {
+      "returncode": 1
+    }
+  },
+  {
+    "id": "S2_NON_OPTIONAL_DIFFERENCE_DETECTED",
+    "success": true,
+    "details": {
+      "group_different": 27
+    }
+  },
+  {
+    "id": "S3_OPTIONAL_ONE_STAND_IGNORED",
+    "success": true,
+    "details": {
+      "employee_different": 0
+    }
+  },
+  {
+    "id": "S4_OPTIONAL_TWO_STANDS_CONFLICT",
+    "success": true,
+    "details": {
+      "employee_same_key_diff": 1
+    }
+  }
+]
