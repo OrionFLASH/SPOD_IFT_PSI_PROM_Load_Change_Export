@@ -40,6 +40,12 @@
 
 6. **`S4_OPTIONAL_TWO_STANDS_CONFLICT`** — Вход: копия, optional в двух стендах с разными значениями. Проверки: различия фиксируются.
 
+## Проверки консистентности (автотесты)
+
+- **Unit** (`src/Tests/test_consistency_checks.py`): типы правил (`csv_columns_count`, `unique`, `field_format`, `referential`, `fail_fast`), флаг **`is_consistency_checks_enabled`** (в т.ч. отсутствие ключа `enabled` в непустой секции), выравнивание **`business_key`** в нарушениях `unique` с `ParsedRow`.
+- **Интеграция на реальных CSV** (`src/Tests/test_consistency_real_group.py`, `unittest.skipUnless`): при наличии `IN/SPOD/.../GROUP*.csv` — дубликаты GROUP для ключа **`01_2026-0_05-2_4|GROUPING|*`**, колонки **`CC_UNIQ_GROUP_S`** / **`CC_UNIQ_GROUP_M`** на merged-строках.
+- Ручная проверка полного прогона: `python3 src/main.py --config config.json` — лист **`CONSISTENCY`**, строка-итог при нуле нарушений, лог **`Проверки консистентности завершены: отклонений=N`**.
+
 ## Критерии успешности
 
 - Все сценарии завершаются ожидаемым исходом.

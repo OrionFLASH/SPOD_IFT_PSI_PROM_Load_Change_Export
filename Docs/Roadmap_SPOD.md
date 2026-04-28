@@ -24,7 +24,7 @@
 | Pre-check обязательных файлов | `[v]` |
 | Параллельная обработка и `dry-run` | `[v]` |
 | Лист `DIFF_REPORT` | `[v]` |
-| Unit-тесты в репозитории | `[w]` — `test_pipeline.py` + `test_consistency_checks.py`; покрытие пайплайна и правил консистентности всё ещё неполное |
+| Unit-тесты в репозитории | `[w]` — `test_pipeline.py`, `test_consistency_checks.py`, при данных `IN/SPOD` — `test_consistency_real_group.py` (≈13 тестов); покрытие Excel/всех веток и CI — неполные |
 | Проверки консистентности (`consistency_checks`, лист CONSISTENCY) | `[v]` |
 | Автоматический CI (GitHub Actions и т.п.) | `[ ]` |
 | Формальные миграции схемы БД | `[ ]` |
@@ -121,7 +121,8 @@
 
 **Статус этапа:** `[w]` — базовые и ручные регрессии есть, CI и полное покрытие — нет
 
-- [v] Unit-тесты: формирование `business_key`, fallback по hash, сценарий merge при одинаковом `row_hash` и разном сыром содержимом (`src/Tests/test_pipeline.py`, 3 теста).
+- [v] Unit-тесты: формирование `business_key`, fallback по hash, сценарий merge при одинаковом `row_hash` и разном сыром содержимом (`src/Tests/test_pipeline.py`, 4 теста).
+- [v] Unit-тесты проверок консистентности (`src/Tests/test_consistency_checks.py`) и при наличии `IN/SPOD` — интеграция на дублях GROUP (`test_consistency_real_group.py`); суммарно ≈13 тестов при полном наборе входных данных.
 - [v] Интеграционные и регрессионные прогоны на данных (сценарии S0–S4), результаты в `Docs/TestReports/` (в т.ч. `test_results_regression_latest.md`).
 - [ ] Автозапуск интеграционных сценариев в CI при каждом коммите.
 - [ ] Unit-тесты на правила подсветки Excel и все ветки форматирования из конфига.
@@ -211,3 +212,4 @@
 | 2026-04 | Формат статусов приведён к **`[v]` / `[w]` / `[ ]` / `[x]`** по правилу проекта в `.cursor/rules/roadmap-spod-status.mdc`. |
 | 2026-04-28 | Добавлен план переноса **`consistency_checks`** из репозитория SPOD_PARCE_LOAD (приоритеты C-01…C-10). |
 | 2026-04-28 | Реализованы C-01…C-10, лист **`CONSISTENCY`**, `scope`/`both`, unit-тесты `test_consistency_checks.py`, обновлены README и конфиг. |
+| 2026-04-28 | Включён **`uniq_group_key`** для GROUP, `is_consistency_checks_enabled`, интеграционный тест на дубли; синхронизация ТЗ, системных требований, плана работ, отчётов тестов. |

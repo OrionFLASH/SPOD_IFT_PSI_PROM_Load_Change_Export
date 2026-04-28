@@ -56,6 +56,7 @@
    - 1 лист на сущность;
    - лист `SUMMARY`;
    - при включённой настройке `excel.diff_report_sheet.enabled` — лист **`DIFF_REPORT`** (агрегированная сводка конфликтов; имя листа задаётся в конфиге);
+   - при включённой секции **`consistency_checks`** в `config.json` — лист **`CONSISTENCY`** (таблица нарушений правил) и при необходимости служебные колонки на листах сущностей (`CONSIST_*`, `CC_*` по правилам);
    - автофильтр на строке заголовка;
    - закрепление области (`freeze_panes`) из конфига;
    - автоподбор ширины с ограничением;
@@ -103,6 +104,7 @@
   - `output_timestamp_format` (формат таймштампа);
   - расширение `.xlsx` добавляется автоматически.
 - параметры листа `DIFF_REPORT` (`excel.diff_report_sheet`: `enabled`, `name`, `freeze_panes`, контекст для сниппетов и т.д.);
+- параметры **`consistency_checks`**: включение (`enabled` или непустая секция без явного `enabled: false`), `fail_fast`, `summary_sheet_name`, `csv_columns_count`, массив **`rules`** (типы правил, `scope`: `per_stand` / `merged` / `both`, выходные суффиксы колонок);
 - `runtime`: `dry_run`, `parallel_workers`, при необходимости — `fail_fast`, `max_errors`.
 
 ## 7. Статус соответствия реализации (контрольный чеклист)
@@ -113,6 +115,7 @@
 | §3 Правила: CSV, ключи, optional-поля, объединение, SQLite, дедуп, консольная статистика | **[сделано]** |
 | §4 Excel: листы сущностей, SUMMARY, форматирование, рамки, приоритет подсветки | **[сделано]** |
 | §4 Лист DIFF_REPORT | **[сделано]** (через конфиг) |
+| §4 Лист CONSISTENCY, проверки `consistency_checks` | **[сделано]** (через конфиг; см. `README.md`, `Docs/Roadmap_SPOD.md` C-01…C-10) |
 | §4 SQLite: runs, ingested_files, raw_rows, merged_rows | **[сделано]** |
 | §4 Логи INFO/DEBUG | **[сделано]** |
 | §4.1 dry-run, parallel | **[сделано]** |

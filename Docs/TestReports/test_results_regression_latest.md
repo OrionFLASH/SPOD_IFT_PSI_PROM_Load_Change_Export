@@ -39,5 +39,6 @@
 ## Unit-тесты
 
 - Команда: `python3 -m unittest discover -s src/Tests -p "test_*.py"`
-- Результат: `OK`
-- Выполнено тестов: `3` (`business_key` для GROUP, fallback-ключ, merge при одинаковом `row_hash` и разном сыром содержимом)
+- Результат: `OK` (актуально при наличии `IN/SPOD` для пропускаемого интеграционного теста GROUP)
+- Выполнено тестов: **`13`** — `test_pipeline` (4), `test_consistency_checks` (8), `test_consistency_real_group` (1, только если есть входные CSV)
+- Дополнительно: сценарии **`consistency_checks`** (уникальность, форматы, ссылки, включение секции без ключа `enabled`)

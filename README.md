@@ -15,7 +15,7 @@
 ## Структура каталогов
 
 - `src` — основной исходный код.
-- `src/spod_exporter` — модули пайплайна консолидации.
+- `src/spod_exporter` — модули пайплайна консолидации (`pipeline`, `consistency_checks`, `config`, `models`, …).
 - `src/Tests` — автотесты.
 - `IN` — входные файлы.
 - `OUT/XLS` — выходные Excel-файлы.
@@ -53,11 +53,12 @@
 | Экспорт Excel в `OUT/XLS`, форматирование из `config.json` | **[сделано]** |
 | Лист `SUMMARY` | **[сделано]** |
 | Лист `DIFF_REPORT` (`excel.diff_report_sheet`) | **[сделано]** |
+| Проверки консистентности (`consistency_checks`), лист `CONSISTENCY`, колонки `CONSIST_*` / `CC_*` | **[сделано]** |
 | Логи INFO/DEBUG в `log/` по шаблону имён и формату DEBUG | **[сделано]** |
 | Консольная аналитика и профилирование этапов | **[сделано]** |
 | Параллельная обработка (`parallel_workers`, `--parallel-workers`) | **[сделано]** |
 | Режим `dry-run` (конфиг + `--dry-run`) | **[сделано]** |
-| Unit-тесты в `src/Tests` | **[частично]** (3 теста: ключи GROUP, fallback CONTEST, merge при коллизии hash) |
+| Unit-тесты в `src/Tests` | **[частично]** (13 тестов: пайплайн, `consistency_checks`, при наличии `IN/SPOD` — интеграция GROUP; без полного покрытия Excel/CI) |
 | Интеграционные сценарии S0–S4 (ручной/внешний прогон) | **[частично]** (отчёты в `Docs/TestReports/`; не в CI) |
 | Валидация схемы CSV (обязательные колонки по сущности) | **[не сделано]** |
 | CI (автозапуск тестов) | **[не сделано]** |
@@ -270,20 +271,21 @@ DEBUG-строка:
   - **[сделано]** формирование `business_key` для сущности `GROUP`;
   - **[сделано]** fallback-ключ `HASH:*` при пустых полях ключа для `CONTEST`;
   - **[сделано]** объединение `GROUP` при одинаковом `row_hash` и разном сыром содержимом (две строки, эталон значений — `PROM`);
-  - **[сделано]** базовые сценарии `consistency_checks` (число колонок, уникальность, формат, ссылка, `fail_fast`).
-- Интеграционные и регрессионные сценарии (S0–S4) описаны в `Docs/TestReports/test_plan_detailed.md`; последние результаты — в `Docs/TestReports/test_results_regression_latest.md`.
+  - **[сделано]** базовые сценарии `consistency_checks` (число колонок, уникальность, формат, ссылка, `fail_fast`, флаг `enabled`, выравнивание `business_key` при unique);
+  - **[сделано]** при наличии входных CSV — интеграционный сценарий дублей GROUP (`test_consistency_real_group.py`, контест `01_2026-0_05-2_4`).
+- Интеграционные и регрессионные сценарии (S0–S4 и заметки по консистентности) в `Docs/TestReports/test_plan_detailed.md`; последние результаты — в `Docs/TestReports/test_results_regression_latest.md`.
 
 ## История версий
 
 ### v0.2.0 (текущая ветка развития)
 
-- **[сделано]** Проверки консистентности: раздел `consistency_checks` в `config.json`, модуль `consistency_checks.py`, лист **`CONSISTENCY`**, колонки на листах сущностей, интеграция в пайплайн.
+- **[сделано]** Проверки консистентности: раздел `consistency_checks` в `config.json`, модуль `consistency_checks.py`, лист **`CONSISTENCY`**, колонки на листах сущностей, интеграция в пайплайн; включение по умолчанию при непустой секции без ключа `enabled` (`is_consistency_checks_enabled`); строка-итог на `CONSISTENCY` при нуле нарушений; правило **`uniq_group_key`** для GROUP (`scope: both`); выравнивание `business_key` в нарушениях unique с `ParsedRow`.
 - **[сделано]** Лист Excel `DIFF_REPORT` и настройка `excel.diff_report_sheet` в `config.json`.
 - **[сделано]** Расширенный набор служебных полей (`diff_columns`, `diff_positions`, `diff_snippets` и др. по конфигу).
 - **[сделано]** Параллельная обработка файлов/сущностей с авто-числом потоков или явным `--parallel-workers`.
 - **[сделано]** Режим `dry-run` в `runtime` и через CLI `--dry-run`.
 - **[сделано]** Пакетная запись в SQLite, профилирование этапов в логах.
-- **[частично]** Unit-тесты расширены сценарием merge при коллизии hash (всего 3 теста); интеграционные прогоны задокументированы в `Docs/TestReports/`.
+- **[частично]** Unit/интеграционные тесты расширены (`test_consistency_*`, `test_consistency_real_group` при наличии `IN/SPOD`); полное покрытие и CI — в плане.
 - **[сделано]** Документация: README, ТЗ, системные требования, план работ; roadmap — статусы **`[v]`** / **`[w]`** / **`[ ]`** / **`[x]`** по `.cursor/rules/roadmap-spod-status.mdc`.
 - **[сделано]** Правило Cursor `.cursor/rules/russian-communication.mdc` — русский язык для ответов и статусов в агенте; навигация по правилам добавлена в README.
 

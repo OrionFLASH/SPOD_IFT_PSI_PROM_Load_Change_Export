@@ -12,6 +12,9 @@
 - CLI-управление: `--dry-run`, `--parallel-workers`.
 - Параметры контекста `diff_snippets` вынесены в `config.json`.
 - Слой **`consistency_checks`**: лист `CONSISTENCY`, правила C-01…C-10, `scope` / `both`, интеграция в пайплайн.
+- Включение проверок при **непустой** секции `consistency_checks` **без** ключа `enabled` (функция `is_consistency_checks_enabled`); явное **`enabled: false`** отключает блок.
+- Правило **`uniq_group_key`** для сущности GROUP (`scope: both`, `use_business_key: true`) в `config.json` — дубли в файле стенда и дубли merged-строк с одним `business_key`.
+- Для **`unique` per_stand**: `business_key` в записи нарушения совпадает с `ParsedRow` (инъекция в колонки `CC_*` на листе сущности).
 
 ## Доработки консистентности (по желанию)
 
