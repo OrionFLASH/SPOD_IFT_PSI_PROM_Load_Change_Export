@@ -265,7 +265,7 @@ DEBUG-строка:
 ## Тесты
 
 - Запуск unit-тестов: `python3 -m unittest discover -s src/Tests -p "test_*.py"`
-- Файлы: `src/Tests/test_pipeline.py` (`TestSpodPipeline`), `src/Tests/test_consistency_checks.py` (`TestConsistencyChecks`).
+- Файлы: `src/Tests/test_pipeline.py` (`TestSpodPipeline`), `src/Tests/test_consistency_checks.py` (`TestConsistencyChecks`), при наличии `IN/SPOD` — `src/Tests/test_consistency_real_group.py` (дубликаты GROUP, контест `01_2026-0_05-2_4`).
 - Покрытие на текущий момент:
   - **[сделано]** формирование `business_key` для сущности `GROUP`;
   - **[сделано]** fallback-ключ `HASH:*` при пустых полях ключа для `CONTEST`;

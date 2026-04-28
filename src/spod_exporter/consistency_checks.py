@@ -63,6 +63,21 @@ def _key_tuple_from_row(row: dict[str, str], key_columns: list[str]) -> tuple[st
     return tuple(str(row.get(c, "")).strip() for c in key_columns)
 
 
+def _canonical_business_key_for_key_tuple(
+    parsed_rows: list[ParsedRow],
+    key_columns: list[str],
+    kt: tuple[str, ...],
+) -> str | None:
+    """
+    Возвращает business_key первой строки с данным составным ключом.
+    Нужен, чтобы нарушение unique совпадало с ключом merged-строк (в пайплайне bk без .strip() по полям).
+    """
+    for pr in parsed_rows:
+        if _key_tuple_from_row(pr.data, key_columns) == kt:
+            return pr.business_key
+    return None
+
+
 def _build_target_key_set(
     rows: list[ParsedRow],
     key_columns: list[str],
@@ -142,6 +157,9 @@ def run_unique_per_stand(
     for kt, lines in counts.items():
         if len(lines) <= 1:
             continue
+        bk_viol = _canonical_business_key_for_key_tuple(parsed_rows, key_columns, kt)
+        if bk_viol is None:
+            bk_viol = "|".join(kt)
         out.append(
             ConsistencyViolation(
                 rule_id=rid,
@@ -150,7 +168,7 @@ def run_unique_per_stand(
                 entity=entity,
                 stand=stand,
                 row_num=lines[0],
-                business_key="|".join(kt),
+                business_key=bk_viol,
                 message=f"дубликат ключа {key_columns}={kt}, строки {lines}",
                 severity="warning",
             )

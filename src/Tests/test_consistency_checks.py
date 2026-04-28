@@ -264,6 +264,52 @@ class TestConsistencyChecks(unittest.TestCase):
             )
         self.assertIn("fail_fast", str(ctx.exception))
 
+    def test_unique_per_stand_violation_matches_pipeline_business_key_with_spaces(self) -> None:
+        """Ключ сравнивается со strip; business_key нарушения совпадает с ParsedRow (инъекция в merged)."""
+        entity = "G"
+        key_cols = ["CONTEST_CODE", "GROUP_CODE", "GROUP_VALUE"]
+        row1 = {"CONTEST_CODE": " 01 ", "GROUP_CODE": "X", "GROUP_VALUE": "*", "TAIL": "1"}
+        row2 = {"CONTEST_CODE": " 01 ", "GROUP_CODE": "X", "GROUP_VALUE": "*", "TAIL": "2"}
+        bk = "|".join(row1.get(c, "") for c in key_cols)
+        pr1 = ParsedRow("IFT", entity, 2, row1, bk, "h1")
+        pr2 = ParsedRow("IFT", entity, 3, row2, bk, "h2")
+        config = {
+            "consistency_checks": {
+                "enabled": True,
+                "fail_fast": False,
+                "csv_columns_count": {"entities": {}, "output": {}},
+                "rules": [
+                    {
+                        "id": "u_sp",
+                        "type": "unique",
+                        "entity": entity,
+                        "enabled": True,
+                        "scope": "per_stand",
+                        "key_columns": key_cols,
+                        "output": {"column_suffix_per_stand": "CC_U_S"},
+                    }
+                ],
+            },
+            "entities": {entity: {"business_key": key_cols}},
+        }
+        parsed = {entity: [pr1, pr2]}
+        merged = {entity: [_merged_one(entity, bk, dict(row1))]}
+        field_orders = {entity: {"IFT": list(row1.keys())}}
+        res = execute_consistency_checks(
+            config=config,
+            stands=["IFT"],
+            entities=config["entities"],
+            parsed_by_entity=parsed,
+            merged_by_entity=merged,
+            field_orders=field_orders,
+            logger=_logger(),
+        )
+        vuniq = [v for v in res.violations if v.rule_id == "u_sp" and v.scope == "per_stand"]
+        self.assertEqual(len(vuniq), 1)
+        self.assertEqual(vuniq[0].business_key, bk)
+        self.assertIn("CC_U_S", merged[entity][0].merged_data)
+        self.assertNotEqual(merged[entity][0].merged_data.get("CC_U_S"), "OK")
+
 
 def _merged_one(entity: str, bk: str, data: dict[str, str]) -> MergedRow:
     return MergedRow(

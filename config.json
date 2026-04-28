@@ -207,7 +207,7 @@
         "id": "uniq_group_key",
         "type": "unique",
         "entity": "GROUP",
-        "enabled": false,
+        "enabled": true,
         "scope": "both",
         "use_business_key": true,
         "output": {
