@@ -14,7 +14,11 @@ from typing import Any
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
-from .consistency_checks import append_consistency_sheet, execute_consistency_checks
+from .consistency_checks import (
+    append_consistency_sheet,
+    execute_consistency_checks,
+    is_consistency_checks_enabled,
+)
 from .logging_setup import debug_extra
 from .models import FileDescriptor, MergedRow, ParsedRow
 
@@ -566,7 +570,7 @@ class SpodPipeline:
         """Запускает проверки консистентности из config.json; дополняет merged_data и список нарушений."""
         self._consistency_violations = []
         cc = self.config.get("consistency_checks") or {}
-        if not cc.get("enabled", False):
+        if not is_consistency_checks_enabled(cc):
             return
         field_orders: dict[str, dict[str, list[str]]] = {
             ent: dict(st_map) for ent, st_map in self.entity_field_orders.items()
@@ -581,6 +585,11 @@ class SpodPipeline:
             logger=self.logger,
         )
         self._consistency_violations = res.violations
+        self.logger.info(
+            "Проверки консистентности завершены: отклонений=%s",
+            len(self._consistency_violations),
+            extra={"class_name": "SpodPipeline", "func_name": "_run_consistency_checks"},
+        )
 
     def _merge_entity_bundle(
         self, entity: str, rows: list[ParsedRow]
@@ -941,7 +950,7 @@ class SpodPipeline:
             self._append_diff_report_sheet(workbook, merged)
 
         cc = self.config.get("consistency_checks") or {}
-        if cc.get("enabled", False):
+        if is_consistency_checks_enabled(cc):
             append_consistency_sheet(workbook, cc, self._consistency_violations)
 
         workbook.save(excel_path)

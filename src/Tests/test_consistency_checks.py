@@ -9,7 +9,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from spod_exporter.consistency_checks import execute_consistency_checks
+from spod_exporter.consistency_checks import (
+    execute_consistency_checks,
+    is_consistency_checks_enabled,
+)
 from spod_exporter.models import MergedRow, ParsedRow
 
 
@@ -21,6 +24,43 @@ def _logger() -> logging.Logger:
 
 class TestConsistencyChecks(unittest.TestCase):
     """Синтетические сценарии для типов правил."""
+
+    def test_is_consistency_checks_enabled(self) -> None:
+        self.assertFalse(is_consistency_checks_enabled({}))
+        self.assertFalse(is_consistency_checks_enabled(None))
+        self.assertTrue(is_consistency_checks_enabled({"enabled": True, "rules": []}))
+        self.assertFalse(is_consistency_checks_enabled({"enabled": False, "rules": []}))
+        self.assertTrue(is_consistency_checks_enabled({"rules": [], "csv_columns_count": {}}))
+
+    def test_missing_enabled_key_still_runs_checks(self) -> None:
+        """Без ключа enabled секция непустая — проверки должны выполняться (регрессия)."""
+        entity = "E1"
+        config = {
+            "consistency_checks": {
+                "fail_fast": False,
+                "csv_columns_count": {
+                    "entities": {entity: {"expected_columns": 1}},
+                    "output": {},
+                },
+                "rules": [],
+            },
+            "entities": {entity: {"business_key": ["A"]}},
+        }
+        stands = ["PROM"]
+        pr = ParsedRow("PROM", entity, 2, {"A": "1", "B": "2"}, "1", "h1")
+        parsed = {entity: [pr]}
+        merged = {entity: [_merged_one(entity, "1", {"A": "1", "B": "2"})]}
+        field_orders = {entity: {"PROM": ["A", "B"]}}
+        res = execute_consistency_checks(
+            config=config,
+            stands=stands,
+            entities=config["entities"],
+            parsed_by_entity=parsed,
+            merged_by_entity=merged,
+            field_orders=field_orders,
+            logger=_logger(),
+        )
+        self.assertGreater(len(res.violations), 0)
 
     def test_csv_columns_count_mismatch_header(self) -> None:
         entity = "E1"

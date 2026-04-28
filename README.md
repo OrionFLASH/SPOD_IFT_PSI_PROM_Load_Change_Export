@@ -229,7 +229,7 @@
 - `logging` — тема логирования;
 - `runtime` — режим выполнения: `dry_run`, `parallel_workers` (`"auto"` или число), при необходимости `fail_fast`, `max_errors`.
 - **`consistency_checks`** (по образцу [SPOD_PARCE_LOAD](https://github.com/OrionFLASH/SPOD_PARCE_LOAD)) — построчные и сводные проверки после merge:
-  - `enabled` — включить этап; `fail_fast` — прервать запуск при первой ошибке с `severity=error`;
+  - `enabled` — включить этап (`false` — выключить); **если ключа нет, а секция `consistency_checks` непустая, проверки считаются включёнными** (чтобы не отключались молча при забытых `rules`); `fail_fast` — прервать запуск при первой ошибке с `severity=error`;
   - `summary_sheet_name` — имя листа сводки (по умолчанию `CONSISTENCY`);
   - **`csv_columns_count`** — ожидаемое число колонок по сущности (`entities.<ENTITY>.expected_columns`, значение **`0`** = эталон как максимум числа колонок заголовка по стендам); блок **`output.column_suffix_per_stand`** — имя колонки статуса на листе сущности;
   - **`rules`** — массив правил с полями `id`, `type`, `entity`, `enabled`, **`scope`**: `per_stand` | `merged` | `both` (при `both` проверка выполняется и по сырым строкам стенда, и по merged; в Excel могут быть две колонки через `output.column_suffix_per_stand` / `column_suffix_merged`);

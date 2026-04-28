@@ -14,6 +14,26 @@ from typing import Any, Callable
 from .models import MergedRow, ParsedRow
 
 
+def is_consistency_checks_enabled(cc: Any) -> bool:
+    """
+    Возвращает True, если блок consistency_checks в конфиге задан непустым dict
+    и явно не отключён (enabled=false).
+
+    Если ключа enabled нет, считаем проверки **включёнными** — иначе при наличии
+    только rules/csv_columns_count проверки молча не запускались бы.
+    """
+    if not isinstance(cc, dict) or len(cc) == 0:
+        return False
+    if "enabled" not in cc:
+        return True
+    v = cc["enabled"]
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "y", "on", "да")
+    return bool(v)
+
+
 @dataclass
 class ConsistencyViolation:
     """Одна запись отклонения для листа CONSISTENCY и логов."""
@@ -664,7 +684,7 @@ def execute_consistency_checks(
     """Запускает все включённые правила с учётом scope."""
     result = ConsistencyRunResult()
     cc = config.get("consistency_checks") or {}
-    if not cc.get("enabled", False):
+    if not is_consistency_checks_enabled(cc):
         return result
     rules: list[dict[str, Any]] = list(cc.get("rules") or [])
     csv_cc = (cc.get("csv_columns_count") or {}).get("entities") or {}
@@ -989,6 +1009,20 @@ def append_consistency_sheet(
                 v.business_key or "",
                 v.severity,
                 v.message,
+            ]
+        )
+    if not violations:
+        sheet.append(
+            [
+                "_summary",
+                "summary",
+                "all",
+                "",
+                "",
+                "",
+                "",
+                "info",
+                "Нарушений не найдено; проверки консистентности выполнены.",
             ]
         )
     sheet.freeze_panes = "A2"
