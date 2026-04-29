@@ -1098,7 +1098,9 @@ def execute_consistency_checks(
         entity = str(rule.get("entity", "")).strip()
         if not entity or entity not in entities:
             continue
-        scopes = _scopes_for_rule(rule)
+        # По требованию проекта все проверки unique всегда выполняются
+        # и по стендам (per_stand), и по итоговым merged-листам.
+        scopes = ["per_stand", "merged"] if rtype == "unique" else _scopes_for_rule(rule)
         for sc in scopes:
             if rtype == "unique":
                 key_cols = rule.get("key_columns")
