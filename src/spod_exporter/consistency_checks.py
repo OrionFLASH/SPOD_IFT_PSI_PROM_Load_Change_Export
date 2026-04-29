@@ -14,6 +14,170 @@ from typing import Any, Callable
 from .models import MergedRow, ParsedRow
 
 
+def _sheet_alias_to_entity_name(name: str) -> str:
+    s = str(name or "").strip()
+    if not s:
+        return ""
+    aliases = {
+        "CONTEST-DATA": "CONTEST",
+        "TOURNAMENT-SCHEDULE": "SCHEDULE",
+        "TOURNAMENT-SHEDULE": "SCHEDULE",
+    }
+    return aliases.get(s, s)
+
+
+def _to_strftime_format(raw: str) -> str:
+    s = str(raw or "").strip()
+    if not s:
+        return s
+    s = s.replace("YYYY", "%Y").replace("MM", "%m").replace("DD", "%d")
+    return s
+
+
+def _normalize_rule_schema(rule: dict[str, Any]) -> dict[str, Any]:
+    """
+    Нормализует SPOD-совместимый формат rules к внутреннему формату текущего проекта.
+    Поддерживает алиасы:
+    - sheet/sheet_src/sheet_ref -> entity/target_entity
+    - column_src/column_ref, columns_src/columns_ref
+    - json_key -> json_path; column_compare -> compare_column
+    - field+format -> column+format_type+params
+    """
+    r = dict(rule)
+    rtype = str(r.get("type", "")).strip()
+
+    if "entity" not in r and "sheet" in r:
+        r["entity"] = _sheet_alias_to_entity_name(r.get("sheet"))
+    if "entity" not in r and "sheet_src" in r:
+        r["entity"] = _sheet_alias_to_entity_name(r.get("sheet_src"))
+
+    if rtype in {"referential", "referential_composite"}:
+        if "target_entity" not in r and "sheet_ref" in r:
+            r["target_entity"] = _sheet_alias_to_entity_name(r.get("sheet_ref"))
+        if "source_column" not in r and "column_src" in r:
+            r["source_column"] = r.get("column_src")
+        if "target_key_columns" not in r and "column_ref" in r:
+            r["target_key_columns"] = [r.get("column_ref")]
+        if "source_columns" not in r and "columns_src" in r:
+            r["source_columns"] = list(r.get("columns_src") or [])
+        if "target_key_columns" not in r and "columns_ref" in r:
+            r["target_key_columns"] = list(r.get("columns_ref") or [])
+
+    if rtype == "json_field_equals_column":
+        if "json_path" not in r and "json_key" in r:
+            r["json_path"] = r.get("json_key")
+        if "compare_column" not in r and "column_compare" in r:
+            r["compare_column"] = r.get("column_compare")
+
+    if rtype == "json_field_in_column":
+        if "json_path" not in r and "json_key" in r:
+            r["json_path"] = r.get("json_key")
+
+    if rtype == "json_priority_unique_per_contest_link":
+        if "json_path" not in r and "json_key" in r:
+            r["json_path"] = r.get("json_key")
+        if "link_sheet" in r:
+            r["link_sheet"] = _sheet_alias_to_entity_name(r.get("link_sheet"))
+
+    if rtype == "cross_sheet_date_lte_today":
+        if "sheet_ref" in r:
+            r["sheet_ref"] = _sheet_alias_to_entity_name(r.get("sheet_ref"))
+        if "date_format" in r:
+            r["date_format"] = _to_strftime_format(str(r.get("date_format", "")))
+
+    if rtype == "field_format":
+        # Старый формат SPOD: field + format{}
+        if "column" not in r and "field" in r:
+            r["column"] = r.get("field")
+        fmt_obj = r.get("format")
+        if isinstance(fmt_obj, dict):
+            if "format_type" not in r:
+                r["format_type"] = str(fmt_obj.get("type", "")).strip().lower()
+            params = dict(r.get("params") or {})
+            if "date_format" in fmt_obj:
+                params["strftime"] = _to_strftime_format(str(fmt_obj.get("date_format")))
+            if "length" in fmt_obj:
+                params["length"] = int(fmt_obj.get("length"))
+            if "decimal_places" in fmt_obj:
+                # Для decimal в текущей реализации проверяем только тип числа, без точной шкалы.
+                params["decimal_places"] = int(fmt_obj.get("decimal_places"))
+            if "special_values" in fmt_obj:
+                params["special_values"] = list(fmt_obj.get("special_values") or [])
+            if "allow_empty" in fmt_obj:
+                params["allow_empty"] = bool(fmt_obj.get("allow_empty"))
+            if params:
+                r["params"] = params
+
+    return r
+
+
+def _normalize_cell_for_compare(value: Any) -> str:
+    return str("" if value is None else value).strip()
+
+
+def _cell_is_empty_for_scope(value: Any) -> bool:
+    v = _normalize_cell_for_compare(value).lower()
+    return v in {"", "-", "none", "null", "nan"}
+
+
+def _normalize_rule_conditions(
+    rule: dict[str, Any],
+    base_name: str,
+) -> list[dict[str, str]]:
+    """
+    Нормализует условия фильтрации строк.
+    Поддерживает:
+    - <base_name>_conditions: [{column, value}] или [{column, op, value}]
+    - <base_name>_column + <base_name>_value (legacy)
+    """
+    out: list[dict[str, str]] = []
+    raw = rule.get(f"{base_name}_conditions")
+    if isinstance(raw, list):
+        for it in raw:
+            if not isinstance(it, dict):
+                continue
+            col = str(it.get("column", "")).strip()
+            if not col:
+                continue
+            op = str(it.get("op", "=")).strip().lower()
+            val = str(it.get("value", "")).strip()
+            out.append({"column": col, "op": op, "value": val})
+        if out:
+            return out
+    legacy_col = str(rule.get(f"{base_name}_column", "")).strip()
+    if legacy_col:
+        out.append(
+            {
+                "column": legacy_col,
+                "op": "=",
+                "value": str(rule.get(f"{base_name}_value", "")).strip(),
+            }
+        )
+    return out
+
+
+def _row_matches_conditions(
+    data: dict[str, str],
+    conditions: list[dict[str, str]],
+    mode: str = "all",
+) -> bool:
+    if not conditions:
+        return True
+    checks: list[bool] = []
+    for c in conditions:
+        col = c["column"]
+        op = c.get("op", "=").lower()
+        left = _normalize_cell_for_compare(data.get(col, ""))
+        right = _normalize_cell_for_compare(c.get("value", ""))
+        if op in {"=", "==", "eq"}:
+            checks.append(left == right)
+        elif op in {"!=", "<>", "ne"}:
+            checks.append(left != right)
+        else:
+            checks.append(left == right)
+    return any(checks) if mode in {"any", "or", "или"} else all(checks)
+
+
 def is_consistency_checks_enabled(cc: Any) -> bool:
     """
     Возвращает True, если блок consistency_checks в конфиге задан непустым dict
@@ -148,8 +312,17 @@ def run_unique_per_stand(
     parsed_rows: list[ParsedRow],
     key_columns: list[str],
 ) -> list[ConsistencyViolation]:
+    scope_mode = str(rule.get("unique_scope_mode", "all")).strip().lower()
+    scope_conditions = _normalize_rule_conditions(rule, "unique_scope")
+    require_non_empty = [
+        str(c).strip() for c in (rule.get("unique_require_non_empty") or []) if str(c).strip()
+    ]
     counts: dict[tuple[str, ...], list[int]] = {}
     for pr in parsed_rows:
+        if not _row_matches_conditions(pr.data, scope_conditions, scope_mode):
+            continue
+        if require_non_empty and any(_cell_is_empty_for_scope(pr.data.get(c, "")) for c in require_non_empty):
+            continue
         kt = _key_tuple_from_row(pr.data, key_columns)
         counts.setdefault(kt, []).append(pr.row_num)
     rid = str(rule.get("id", "unique"))
@@ -294,10 +467,23 @@ def run_field_format(
     for row_num, data, bk in rows_data:
         val = str(data.get(column, ""))
         ok = True
-        if fmt == "date":
+        allow_empty = bool(params.get("allow_empty", True))
+        special_values = {str(x) for x in (params.get("special_values") or [])}
+        if val.strip() in special_values:
+            ok = True
+        elif not val.strip() and allow_empty:
+            ok = True
+        elif not val.strip() and not allow_empty:
+            ok = False
+        elif fmt == "date":
             ok = _check_date(val, str(params.get("strftime", "%Y-%m-%d")))
         elif fmt == "decimal":
             ok = _check_decimal(val)
+            dp = params.get("decimal_places")
+            if ok and dp is not None and val.strip():
+                m = re.fullmatch(r"-?\d+(\.(\d+))?", val.strip())
+                frac = (m.group(2) if m else "") or ""
+                ok = len(frac) == int(dp)
         elif fmt == "fixed_length_digits":
             ok = _check_fixed_digits(val, int(params.get("length", 1)))
         else:
@@ -339,12 +525,22 @@ def run_referential(
     out: list[ConsistencyViolation] = []
     if not target_entity or not target_key_columns:
         return out
+    src_conds = _normalize_rule_conditions(rule, "src_row")
+    ref_conds = _normalize_rule_conditions(rule, "ref_row")
+    src_mode = str(rule.get("src_row_conditions_mode", "all")).strip().lower()
+    ref_mode = str(rule.get("ref_row_conditions_mode", "all")).strip().lower()
 
     if scope == "per_stand" and stand is not None:
-        targets = [pr for pr in parsed_by_entity.get(target_entity, []) if pr.stand == stand]
+        targets = [
+            pr
+            for pr in parsed_by_entity.get(target_entity, [])
+            if pr.stand == stand and _row_matches_conditions(pr.data, ref_conds, ref_mode)
+        ]
         tset = _build_target_key_set(targets, target_key_columns)
         for pr in parsed_by_entity.get(entity, []):
             if pr.stand != stand:
+                continue
+            if not _row_matches_conditions(pr.data, src_conds, src_mode):
                 continue
             kt = _key_tuple_from_row(pr.data, source_columns)
             if kt == tuple("" for _ in source_columns):
@@ -370,12 +566,18 @@ def run_referential(
 
     # merged: значения из merged_data должны попадать в объединённый набор ключей target по всем стендам
     if scope == "merged" and merged_rows is not None:
-        targets = parsed_by_entity.get(target_entity, [])
+        targets = [
+            pr
+            for pr in parsed_by_entity.get(target_entity, [])
+            if _row_matches_conditions(pr.data, ref_conds, ref_mode)
+        ]
         tset = _build_target_key_set(targets, target_key_columns)
         for mr in merged_rows:
             if mr.entity != entity:
                 continue
             row = {k: str(v) for k, v in mr.merged_data.items()}
+            if not _row_matches_conditions(row, src_conds, src_mode):
+                continue
             kt = _key_tuple_from_row(row, source_columns)
             if kt == tuple("" for _ in source_columns):
                 continue
@@ -416,14 +618,33 @@ def run_cross_sheet_date_lte_today(
     entity: str,
     stand: str | None,
     rows_data: list[tuple[int | None, dict[str, str], str | None]],
+    parsed_by_entity: dict[str, list[ParsedRow]] | None = None,
 ) -> list[ConsistencyViolation]:
     rid = str(rule.get("id", "cross_sheet_date_lte_today"))
     column = str(rule.get("column", "")).strip()
     fmt = str(rule.get("date_format", "%Y-%m-%d"))
+    ref_entity = str(rule.get("sheet_ref", rule.get("ref_entity", ""))).strip()
+    src_key = str(rule.get("column_src", "")).strip()
+    ref_key = str(rule.get("column_ref", "")).strip()
+    ref_date = str(rule.get("column_date_ref", "")).strip()
     today = datetime.now().date()
     out: list[ConsistencyViolation] = []
+    ref_map: dict[str, str] = {}
+    if parsed_by_entity is not None and ref_entity and src_key and ref_key and ref_date:
+        for pr in parsed_by_entity.get(ref_entity, []):
+            if stand is not None and pr.stand != stand:
+                continue
+            rk = _normalize_cell_for_compare(pr.data.get(ref_key, ""))
+            if not rk:
+                continue
+            if rk not in ref_map:
+                ref_map[rk] = str(pr.data.get(ref_date, "")).strip()
     for row_num, data, bk in rows_data:
-        val = str(data.get(column, "")).strip()
+        if ref_map:
+            src_val = _normalize_cell_for_compare(data.get(src_key, ""))
+            val = ref_map.get(src_val, "")
+        else:
+            val = str(data.get(column, "")).strip()
         if not val:
             continue
         try:
@@ -489,6 +710,7 @@ def run_json_spod_format(
     rid = str(rule.get("id", "json_spod_format"))
     column = str(rule.get("json_column", rule.get("column", ""))).strip()
     required = bool(rule.get("json_required", False))
+    numeric_keys = {str(k).strip() for k in (rule.get("numeric_value_keys") or []) if str(k).strip()}
     out: list[ConsistencyViolation] = []
     for row_num, data, bk in rows_data:
         raw = str(data.get(column, "")).strip()
@@ -509,7 +731,7 @@ def run_json_spod_format(
                 )
             continue
         try:
-            json.loads(_normalize_spod_json_cell(raw))
+            obj = json.loads(_normalize_spod_json_cell(raw))
         except json.JSONDecodeError as exc:
             out.append(
                 ConsistencyViolation(
@@ -524,6 +746,32 @@ def run_json_spod_format(
                     severity="error",
                 )
             )
+            continue
+        if numeric_keys and isinstance(obj, dict):
+            bad: list[str] = []
+            for k in numeric_keys:
+                if k not in obj:
+                    continue
+                v = obj.get(k)
+                if isinstance(v, (int, float)):
+                    continue
+                if isinstance(v, str) and _check_decimal(v):
+                    continue
+                bad.append(k)
+            if bad:
+                out.append(
+                    ConsistencyViolation(
+                        rule_id=rid,
+                        rule_type="json_spod_format",
+                        scope=str(rule.get("_runtime_scope", "per_stand")),
+                        entity=entity,
+                        stand=stand,
+                        row_num=row_num,
+                        business_key=bk,
+                        message=f"{column}: numeric_value_keys нечисловые: {bad}",
+                        severity="error",
+                    )
+                )
     return out
 
 
@@ -537,8 +785,16 @@ def run_json_field_equals_column(
     jcol = str(rule.get("json_column", "")).strip()
     path = str(rule.get("json_path", "")).strip()
     cmp_col = str(rule.get("compare_column", "")).strip()
+    must_not_equal = bool(rule.get("must_not_equal", False))
+    filter_col = str(rule.get("filter_column", "")).strip()
+    filter_val = str(rule.get("filter_value", "")).strip()
+    j_filter_key = str(rule.get("json_filter_key", "")).strip()
+    j_filter_val = str(rule.get("json_filter_value", "")).strip()
     out: list[ConsistencyViolation] = []
     for row_num, data, bk in rows_data:
+        if filter_col:
+            if _normalize_cell_for_compare(data.get(filter_col, "")) != _normalize_cell_for_compare(filter_val):
+                continue
         raw = str(data.get(jcol, "")).strip()
         if not raw:
             continue
@@ -546,9 +802,15 @@ def run_json_field_equals_column(
             obj = json.loads(_normalize_spod_json_cell(raw))
         except json.JSONDecodeError:
             continue
+        if j_filter_key:
+            jf = _get_json_path(obj, j_filter_key)
+            if _normalize_cell_for_compare(jf) != _normalize_cell_for_compare(j_filter_val):
+                continue
         jv = _get_json_path(obj, path)
         cv = str(data.get(cmp_col, "")).strip()
-        if str(jv).strip() != cv:
+        is_equal = _normalize_cell_for_compare(jv) == _normalize_cell_for_compare(cv)
+        bad = is_equal if must_not_equal else not is_equal
+        if bad:
             out.append(
                 ConsistencyViolation(
                     rule_id=rid,
@@ -558,7 +820,11 @@ def run_json_field_equals_column(
                     stand=stand,
                     row_num=row_num,
                     business_key=bk,
-                    message=f"{jcol}.{path}={jv!r} != {cmp_col}={cv!r}",
+                    message=(
+                        f"{jcol}.{path}={jv!r} == {cmp_col}={cv!r}"
+                        if must_not_equal
+                        else f"{jcol}.{path}={jv!r} != {cmp_col}={cv!r}"
+                    ),
                     severity="warning",
                 )
             )
@@ -570,13 +836,22 @@ def run_json_field_in_column(
     entity: str,
     stand: str | None,
     rows_data: list[tuple[int | None, dict[str, str], str | None]],
+    all_rows_data: list[tuple[int | None, dict[str, str], str | None]] | None = None,
 ) -> list[ConsistencyViolation]:
     rid = str(rule.get("id", "json_field_in_column"))
     jcol = str(rule.get("json_column", "")).strip()
     path = str(rule.get("json_path", "")).strip()
     allowed_col = str(rule.get("values_column", "")).strip()
+    column_in_sheet = str(rule.get("column_in_sheet", "")).strip()
     sep = str(rule.get("values_separator", ";"))
     out: list[ConsistencyViolation] = []
+    allowed_set_sheet: set[str] = set()
+    src_rows_for_set = all_rows_data if all_rows_data is not None else rows_data
+    if column_in_sheet:
+        for _, d, _ in src_rows_for_set:
+            v = _normalize_cell_for_compare(d.get(column_in_sheet, ""))
+            if v:
+                allowed_set_sheet.add(v)
     for row_num, data, bk in rows_data:
         raw = str(data.get(jcol, "")).strip()
         if not raw:
@@ -588,6 +863,8 @@ def run_json_field_in_column(
         jv = str(_get_json_path(obj, path)).strip()
         allowed_raw = str(data.get(allowed_col, "")).strip()
         allowed = {x.strip() for x in allowed_raw.split(sep) if x.strip()}
+        if allowed_set_sheet:
+            allowed |= allowed_set_sheet
         if jv and jv not in allowed:
             out.append(
                 ConsistencyViolation(
@@ -610,6 +887,7 @@ def run_json_priority_unique_per_contest_link(
     entity: str,
     stand: str | None,
     rows_data: list[tuple[int | None, dict[str, str], str | None]],
+    parsed_by_entity: dict[str, list[ParsedRow]] | None = None,
 ) -> list[ConsistencyViolation]:
     """
     Упрощённая проверка: в одной строке JSON-массив в json_column;
@@ -618,7 +896,80 @@ def run_json_priority_unique_per_contest_link(
     rid = str(rule.get("id", "json_priority_unique"))
     jcol = str(rule.get("json_column", "")).strip()
     path = str(rule.get("json_path", "priority")).strip()
+    reward_code_col = str(rule.get("reward_code_column", "REWARD_CODE")).strip()
+    link_entity = str(rule.get("link_sheet", "")).strip()
+    link_contest_col = str(rule.get("link_contest_column", "CONTEST_CODE")).strip()
+    link_reward_col = str(rule.get("link_reward_column", "REWARD_CODE")).strip()
     out: list[ConsistencyViolation] = []
+    if parsed_by_entity is not None and link_entity:
+        rewards_by_code: dict[str, tuple[int | None, dict[str, str], str | None]] = {}
+        for rn, d, bk in rows_data:
+            rc = _normalize_cell_for_compare(d.get(reward_code_col, ""))
+            if rc and rc not in rewards_by_code:
+                rewards_by_code[rc] = (rn, d, bk)
+        by_contest: dict[str, set[str]] = {}
+        for pr in parsed_by_entity.get(link_entity, []):
+            if stand is not None and pr.stand != stand:
+                continue
+            contest = _normalize_cell_for_compare(pr.data.get(link_contest_col, ""))
+            reward_code = _normalize_cell_for_compare(pr.data.get(link_reward_col, ""))
+            if not contest or not reward_code:
+                continue
+            by_contest.setdefault(contest, set()).add(reward_code)
+        for contest, reward_codes in by_contest.items():
+            seen: dict[str, str] = {}
+            missing: list[str] = []
+            for rc in reward_codes:
+                rr = rewards_by_code.get(rc)
+                if rr is None:
+                    continue
+                row_num, data, bk = rr
+                raw = str(data.get(jcol, "")).strip()
+                if not raw:
+                    missing.append(rc)
+                    continue
+                try:
+                    obj = json.loads(_normalize_spod_json_cell(raw))
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict):
+                    pv = _normalize_cell_for_compare(_get_json_path(obj, path))
+                else:
+                    pv = ""
+                if not pv:
+                    missing.append(rc)
+                    continue
+                if pv in seen:
+                    out.append(
+                        ConsistencyViolation(
+                            rule_id=rid,
+                            rule_type="json_priority_unique_per_contest_link",
+                            scope=str(rule.get("_runtime_scope", "per_stand")),
+                            entity=entity,
+                            stand=stand,
+                            row_num=row_num,
+                            business_key=bk,
+                            message=f"contest={contest}: priority={pv} повтор для reward {rc} и {seen[pv]}",
+                            severity="warning",
+                        )
+                    )
+                else:
+                    seen[pv] = rc
+            if missing and len(missing) != len(reward_codes):
+                out.append(
+                    ConsistencyViolation(
+                        rule_id=rid,
+                        rule_type="json_priority_unique_per_contest_link",
+                        scope=str(rule.get("_runtime_scope", "per_stand")),
+                        entity=entity,
+                        stand=stand,
+                        row_num=None,
+                        business_key=None,
+                        message=f"contest={contest}: часть reward без priority ({missing})",
+                        severity="warning",
+                    )
+                )
+        return out
     for row_num, data, bk in rows_data:
         raw = str(data.get(jcol, "")).strip()
         if not raw:
@@ -704,8 +1055,16 @@ def execute_consistency_checks(
     cc = config.get("consistency_checks") or {}
     if not is_consistency_checks_enabled(cc):
         return result
-    rules: list[dict[str, Any]] = list(cc.get("rules") or [])
-    csv_cc = (cc.get("csv_columns_count") or {}).get("entities") or {}
+    raw_rules = list(cc.get("rules") or [])
+    rules: list[dict[str, Any]] = [_normalize_rule_schema(r) for r in raw_rules]
+    csv_block = cc.get("csv_columns_count") or {}
+    csv_entities = csv_block.get("entities") or {}
+    csv_sheets = csv_block.get("sheets") or {}
+    csv_cc: dict[str, Any] = {}
+    for en, spec in csv_entities.items():
+        csv_cc[_sheet_alias_to_entity_name(en)] = spec
+    for sh, spec in csv_sheets.items():
+        csv_cc[_sheet_alias_to_entity_name(sh)] = spec
 
     # --- csv_columns_count (per entity, each stand) ---
     default_rule = {"id": "csv_columns_auto", "type": "csv_columns_count"}
@@ -844,7 +1203,15 @@ def execute_consistency_checks(
                         ]
                         rc = dict(rule)
                         rc["_runtime_scope"] = "per_stand"
-                        result.violations.extend(run_cross_sheet_date_lte_today(rc, entity, stand, rows))
+                        result.violations.extend(
+                            run_cross_sheet_date_lte_today(
+                                rc,
+                                entity,
+                                stand,
+                                rows,
+                                parsed_by_entity,
+                            )
+                        )
                 else:
                     rows = [
                         (None, {k: str(v) for k, v in mr.merged_data.items()}, mr.business_key)
@@ -852,7 +1219,89 @@ def execute_consistency_checks(
                     ]
                     rc = dict(rule)
                     rc["_runtime_scope"] = "merged"
-                    result.violations.extend(run_cross_sheet_date_lte_today(rc, entity, None, rows))
+                    result.violations.extend(
+                        run_cross_sheet_date_lte_today(
+                            rc,
+                            entity,
+                            None,
+                            rows,
+                            parsed_by_entity,
+                        )
+                    )
+                continue
+
+            if rtype == "json_field_in_column":
+                if sc == "per_stand":
+                    for stand in stands:
+                        rows = [
+                            (pr.row_num, pr.data, pr.business_key)
+                            for pr in parsed_by_entity.get(entity, [])
+                            if pr.stand == stand
+                        ]
+                        rc = dict(rule)
+                        rc["_runtime_scope"] = "per_stand"
+                        result.violations.extend(
+                            run_json_field_in_column(
+                                rc,
+                                entity,
+                                stand,
+                                rows,
+                                rows,
+                            )
+                        )
+                else:
+                    rows = [
+                        (None, {k: str(v) for k, v in mr.merged_data.items()}, mr.business_key)
+                        for mr in merged_by_entity.get(entity, [])
+                    ]
+                    rc = dict(rule)
+                    rc["_runtime_scope"] = "merged"
+                    result.violations.extend(
+                        run_json_field_in_column(
+                            rc,
+                            entity,
+                            None,
+                            rows,
+                            rows,
+                        )
+                    )
+                continue
+
+            if rtype == "json_priority_unique_per_contest_link":
+                if sc == "per_stand":
+                    for stand in stands:
+                        rows = [
+                            (pr.row_num, pr.data, pr.business_key)
+                            for pr in parsed_by_entity.get(entity, [])
+                            if pr.stand == stand
+                        ]
+                        rc = dict(rule)
+                        rc["_runtime_scope"] = "per_stand"
+                        result.violations.extend(
+                            run_json_priority_unique_per_contest_link(
+                                rc,
+                                entity,
+                                stand,
+                                rows,
+                                parsed_by_entity,
+                            )
+                        )
+                else:
+                    rows = [
+                        (None, {k: str(v) for k, v in mr.merged_data.items()}, mr.business_key)
+                        for mr in merged_by_entity.get(entity, [])
+                    ]
+                    rc = dict(rule)
+                    rc["_runtime_scope"] = "merged"
+                    result.violations.extend(
+                        run_json_priority_unique_per_contest_link(
+                            rc,
+                            entity,
+                            None,
+                            rows,
+                            parsed_by_entity,
+                        )
+                    )
                 continue
 
             if rtype in RUNNERS and rtype.startswith("json"):
@@ -999,49 +1448,202 @@ def append_consistency_sheet(
     workbook: Any,
     cc: dict[str, Any],
     violations: list[ConsistencyViolation],
+    stands: list[str] | None = None,
 ) -> None:
-    """Добавляет лист CONSISTENCY с таблицей отклонений."""
+    """Добавляет лист CONSISTENCY: свод по правилам в разрезе стендов."""
+    stands = list(stands or [])
+
+    def _rule_type_label(rt: str) -> str:
+        mapping = {
+            "csv_columns_count": "число полей в CSV",
+            "unique": "уникальность",
+            "field_length": "длина поля",
+            "field_format": "формат поля",
+            "referential": "ссылочная целостность",
+            "referential_composite": "ссылочная целостность (составной ключ)",
+            "cross_sheet_date_lte_today": "дата <= сегодня",
+            "json_spod_format": "формат SPOD-JSON",
+            "json_field_equals_column": "JSON поле = колонке",
+            "json_field_in_column": "JSON поле в колонке",
+            "json_priority_unique_per_contest_link": "JSON priority уникален по contest",
+        }
+        return mapping.get(rt, rt)
+
+    def _rule_source_table(rule: dict[str, Any]) -> str:
+        return str(rule.get("sheet_src", rule.get("sheet", rule.get("entity", "")))).strip()
+
+    def _rule_source_field(rule: dict[str, Any]) -> str:
+        for k in ("column_src", "source_column", "field", "column", "json_column"):
+            if rule.get(k):
+                return str(rule.get(k))
+        cols = rule.get("columns_src") or rule.get("source_columns") or rule.get("key_columns")
+        if isinstance(cols, list):
+            return ",".join(str(x) for x in cols)
+        return ""
+
+    def _rule_target_table(rule: dict[str, Any]) -> str:
+        return str(rule.get("sheet_ref", rule.get("target_entity", ""))).strip()
+
+    def _rule_target_field(rule: dict[str, Any]) -> str:
+        for k in ("column_ref", "compare_column", "column_compare", "column_in_sheet"):
+            if rule.get(k):
+                return str(rule.get(k))
+        cols = rule.get("columns_ref") or rule.get("target_key_columns")
+        if isinstance(cols, list):
+            return ",".join(str(x) for x in cols)
+        return ""
+
+    def _rule_param(rule: dict[str, Any]) -> str:
+        rt = str(rule.get("type", ""))
+        if rt == "field_length":
+            fs = rule.get("fields") or {}
+            parts: list[str] = []
+            if isinstance(fs, dict):
+                for col, spec in fs.items():
+                    if isinstance(spec, dict):
+                        parts.append(f"{col} {spec.get('operator', '<=')}{spec.get('limit', '')}")
+            return "; ".join(parts)
+        if rt == "field_format":
+            if rule.get("format"):
+                return str(rule.get("format"))
+            ft = str(rule.get("format_type", ""))
+            params = rule.get("params") or {}
+            return f"{ft} {params}".strip()
+        if rt in {"referential", "referential_composite"}:
+            return "source -> reference"
+        if rt == "cross_sheet_date_lte_today":
+            return f"date_format={rule.get('date_format', '%Y-%m-%d')}"
+        return ""
+
+    def _sample_text(rows: list[ConsistencyViolation], limit: int = 5) -> str:
+        if not rows:
+            return ""
+        parts: list[str] = []
+        for v in rows[:limit]:
+            parts.append(
+                f"{v.stand or 'NO_STAND'}|row={v.row_num if v.row_num is not None else '-'}|"
+                f"bk={v.business_key or '-'}|{v.message}"
+            )
+        if len(rows) > limit:
+            parts.append(f"... +{len(rows) - limit}")
+        return " || ".join(parts)[:12000]
+
     name = str(cc.get("summary_sheet_name", "CONSISTENCY"))[:31]
     sheet = workbook.create_sheet(name)
     headers = [
-        "rule_id",
+        "ТИП ПРОВЕРКИ",
+        "Описание",
+        "таблица источник",
+        "поле источник",
+        "таблица где проверяем",
+        "поле для проверки",
+        "параметр сравнения",
+        "комментарий",
+        "check_id",
         "rule_type",
         "scope",
-        "entity",
         "stand",
-        "row_num",
-        "business_key",
-        "severity",
-        "message",
+        "total_rows",
+        "violations",
+        "sample",
     ]
     sheet.append(headers)
+
+    rules_raw = list(cc.get("rules") or [])
+    rules: list[dict[str, Any]] = [_normalize_rule_schema(r) for r in rules_raw]
+    by_rule_stand: dict[tuple[str, str], list[ConsistencyViolation]] = {}
     for v in violations:
+        st = v.stand or "NO_STAND"
+        by_rule_stand.setdefault((str(v.rule_id), st), []).append(v)
+
+    for rule in rules:
+        rid = str(rule.get("id", ""))
+        if not rid:
+            continue
+        enabled = bool(rule.get("enabled", True))
+        rt = str(rule.get("type", ""))
+        src_t = _rule_source_table(rule)
+        src_f = _rule_source_field(rule)
+        dst_t = _rule_target_table(rule)
+        dst_f = _rule_target_field(rule)
+        param = _rule_param(rule)
+        comment = "Правило отключено (enabled=false)." if not enabled else ""
+        scopes = _scopes_for_rule(rule)
+
+        stands_for_rule = list(stands) if "per_stand" in scopes else []
+        if "merged" in scopes:
+            stands_for_rule.append("NO_STAND")
+        if not stands_for_rule:
+            stands_for_rule = list(stands) or ["NO_STAND"]
+
+        for st in stands_for_rule:
+            rows = by_rule_stand.get((rid, st), [])
+            sample = _sample_text(rows)
+            if not sample and not enabled:
+                sample = "Проверка не выполнялась: правило отключено."
+            sheet.append(
+                [
+                    _rule_type_label(rt),
+                    str(rule.get("name", rid)),
+                    src_t,
+                    src_f,
+                    dst_t,
+                    dst_f,
+                    param,
+                    comment,
+                    rid,
+                    rt,
+                    ",".join(scopes),
+                    st,
+                    len(rows),
+                    len(rows),
+                    sample,
+                ]
+            )
+
+    # Отдельные строки для авто-проверки csv_columns_count.
+    csv_rows = [v for v in violations if v.rule_id == "csv_columns_auto"]
+    if csv_rows:
+        for st in stands or ["NO_STAND"]:
+            rows = [v for v in csv_rows if (v.stand or "NO_STAND") == st]
+            sheet.append(
+                [
+                    _rule_type_label("csv_columns_count"),
+                    "Проверка числа полей CSV",
+                    "",
+                    "все поля строки",
+                    "",
+                    "",
+                    "expected_columns / auto",
+                    "",
+                    "csv_columns_auto",
+                    "csv_columns_count",
+                    "per_stand",
+                    st,
+                    len(rows),
+                    len(rows),
+                    _sample_text(rows),
+                ]
+            )
+
+    if sheet.max_row == 1:
         sheet.append(
             [
-                v.rule_id,
-                v.rule_type,
-                v.scope,
-                v.entity,
-                v.stand or "",
-                v.row_num if v.row_num is not None else "",
-                v.business_key or "",
-                v.severity,
-                v.message,
-            ]
-        )
-    if not violations:
-        sheet.append(
-            [
-                "_summary",
                 "summary",
-                "all",
-                "",
-                "",
-                "",
-                "",
-                "info",
                 "Нарушений не найдено; проверки консистентности выполнены.",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "all",
+                0,
+                0,
+                "",
             ]
         )
     sheet.freeze_panes = "A2"
-    sheet.auto_filter.ref = f"A1:I1"
+    sheet.auto_filter.ref = "A1:O1"

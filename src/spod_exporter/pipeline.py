@@ -337,7 +337,7 @@ class SpodPipeline:
                 stats["processed_rows"] += len(parsed_rows)
                 stats["rows_by_entity"][descriptor.entity] += len(parsed_rows)
 
-                if file_is_new_hash.get(descriptor.file_hash, False) and (not self.dry_run):
+                if not self.dry_run:
                     raw_rows_payload = [
                         (
                             self.run_id,
@@ -590,6 +590,59 @@ class SpodPipeline:
             len(self._consistency_violations),
             extra={"class_name": "SpodPipeline", "func_name": "_run_consistency_checks"},
         )
+        self._log_consistency_by_rule_and_stand()
+
+    def _log_consistency_by_rule_and_stand(self) -> None:
+        """Пишет в лог таблицу: нарушения по правилам в разрезе стендов."""
+        if not self._consistency_violations:
+            self.logger.info(
+                "CONSISTENCY: нарушений нет (таблица по правилам/стендам пустая).",
+                extra={"class_name": "SpodPipeline", "func_name": "_log_consistency_by_rule_and_stand"},
+            )
+            return
+
+        stands = list(self.stands)
+        # Нарушения без конкретного стенда (например merged) учитываем отдельно.
+        extra_col = "NO_STAND"
+        counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        rule_types: dict[str, str] = {}
+
+        for v in self._consistency_violations:
+            rid = str(v.rule_id)
+            rule_types[rid] = str(v.rule_type)
+            st = str(v.stand) if v.stand else extra_col
+            counts[rid][st] += 1
+
+        columns = stands + [extra_col, "TOTAL"]
+        header = ["RULE_ID", "TYPE"] + columns
+        rows: list[list[str]] = []
+        for rid in sorted(counts.keys()):
+            by_stand = counts[rid]
+            total = sum(by_stand.values())
+            row = [rid, rule_types.get(rid, "")]
+            for c in columns:
+                if c == "TOTAL":
+                    row.append(str(total))
+                else:
+                    row.append(str(by_stand.get(c, 0)))
+            rows.append(row)
+
+        widths = [len(h) for h in header]
+        for r in rows:
+            for i, cell in enumerate(r):
+                widths[i] = max(widths[i], len(cell))
+
+        def _fmt_row(cells: list[str]) -> str:
+            return " | ".join(cells[i].ljust(widths[i]) for i in range(len(cells)))
+
+        sep = "-+-".join("-" * w for w in widths)
+        self.logger.info(
+            "CONSISTENCY: нарушения по правилам и стендам\n%s\n%s\n%s",
+            _fmt_row(header),
+            sep,
+            "\n".join(_fmt_row(r) for r in rows),
+            extra={"class_name": "SpodPipeline", "func_name": "_log_consistency_by_rule_and_stand"},
+        )
 
     def _merge_entity_bundle(
         self, entity: str, rows: list[ParsedRow]
@@ -649,52 +702,10 @@ class SpodPipeline:
     def _merge_entity_default(
         self, entity: str, rows: list[ParsedRow]
     ) -> tuple[list[MergedRow], dict[str, int]]:
-        by_business_key: dict[str, list[ParsedRow]] = defaultdict(list)
+        by_key_rows: dict[str, list[ParsedRow]] = defaultdict(list)
         for row in rows:
-            by_business_key[row.business_key].append(row)
-
-        grouped: dict[tuple[str, str], list[ParsedRow]] = defaultdict(list)
-        for row in rows:
-            grouped[(row.business_key, row.row_hash)].append(row)
-
-        merged_rows: list[MergedRow] = []
-        by_business_key_counts: dict[str, int] = defaultdict(int)
-        for (business_key, row_hash), group_rows in grouped.items():
-            # Разделяем по фактическому сырому содержимому строки: один row_hash не должен
-            # склеивать разные наборы полей/значений (защита от коллизий и сбоев выравнивания).
-            raw_partitions: dict[str, list[ParsedRow]] = defaultdict(list)
-            for row in group_rows:
-                raw_partitions[self._raw_row_fingerprint(row.data)].append(row)
-
-            for part in raw_partitions.values():
-                # Эталон для отображаемых значений — выбранный стенд (по умолчанию PROM), если он есть в группе.
-                reference_row = self._pick_reference_parsed_row(part)
-                effective_row_hash = self._hash_json(self._normalize_row(reference_row.data))
-                base_data = dict(reference_row.data)
-                stands = self._collect_stands_matching_display_payload(
-                    business_key, base_data, by_business_key[business_key]
-                )
-                source_stands = "-".join(stands)
-                source_count = len(stands)
-                by_business_key_counts[business_key] += 1
-                diff_group_key = f"{entity}:{business_key}:{by_business_key_counts[business_key]}"
-                base_data["source_stands"] = source_stands
-                base_data["source_count"] = str(source_count)
-                base_data["is_equal_all"] = "1" if source_count == len(self.stands) else "0"
-                base_data["diff_group_key"] = diff_group_key
-                merged_rows.append(
-                    MergedRow(
-                        entity=entity,
-                        business_key=business_key,
-                        row_hash=effective_row_hash,
-                        source_stands=source_stands,
-                        source_count=source_count,
-                        is_equal_all=source_count == len(self.stands),
-                        diff_group_key=diff_group_key,
-                        merged_data=base_data,
-                    )
-                )
-        return merged_rows, by_business_key_counts
+            by_key_rows[row.business_key].append(row)
+        return self._merge_by_business_key_clusters(entity, by_key_rows)
 
     def _raw_row_fingerprint(self, data: dict[str, str]) -> str:
         """Стабильный отпечаток сырой строки для разделения групп с одинаковым row_hash."""
@@ -728,33 +739,34 @@ class SpodPipeline:
     ) -> tuple[list[MergedRow], dict[str, int], set[str]]:
         field_orders = self.entity_field_orders.get(entity, {})
         reference_fields = set(field_orders.get(reference_stand, []))
-        all_fields = set()
+        all_fields: set[str] = set()
         for stand_fields in field_orders.values():
             all_fields.update(stand_fields)
         extra_fields = all_fields - reference_fields
-        non_extra_fields = [field for field in all_fields if field not in extra_fields]
-
         by_key_rows: dict[str, list[ParsedRow]] = defaultdict(list)
         for row in rows:
             by_key_rows[row.business_key].append(row)
 
+        merged_rows, by_business_key_counts = self._merge_by_business_key_clusters(
+            entity=entity, by_key_rows=by_key_rows
+        )
+        return merged_rows, by_business_key_counts, set(extra_fields)
+
+    def _merge_by_business_key_clusters(
+        self, entity: str, by_key_rows: dict[str, list[ParsedRow]]
+    ) -> tuple[list[MergedRow], dict[str, int]]:
+        """Схлопывает только идентичные строки по ключу; разные оставляет отдельными."""
         merged_rows: list[MergedRow] = []
         by_business_key_counts: dict[str, int] = defaultdict(int)
-        stand_priority = [reference_stand] + [stand for stand in self.stands if stand != reference_stand]
-        stand_rank = {name: idx for idx, name in enumerate(stand_priority)}
+        rank = self._stand_sort_rank()
 
         for business_key, key_rows in by_key_rows.items():
-            sorted_rows = sorted(key_rows, key=lambda item: stand_rank.get(item.stand, 999))
+            sorted_rows = sorted(key_rows, key=lambda item: rank.get(item.stand, 999))
             clusters: list[list[ParsedRow]] = []
             for candidate in sorted_rows:
                 placed = False
                 for cluster in clusters:
-                    if self._row_compatible_with_cluster(
-                        candidate=candidate,
-                        cluster=cluster,
-                        non_extra_fields=non_extra_fields,
-                        extra_fields=extra_fields,
-                    ):
+                    if self._row_compatible_with_cluster(candidate=candidate, cluster=cluster):
                         cluster.append(candidate)
                         placed = True
                         break
@@ -764,45 +776,56 @@ class SpodPipeline:
             for cluster_rows in clusters:
                 by_business_key_counts[business_key] += 1
                 reference_row = self._pick_reference_parsed_row(cluster_rows)
-                base_data = dict(reference_row.data)
-                stands = self._collect_stands_matching_display_payload(
-                    business_key, base_data, key_rows
-                )
+                merged_payload = self._build_cluster_payload(reference_row, cluster_rows)
+                effective_row_hash = self._hash_json(self._normalize_row(merged_payload))
+                stands = sorted({row.stand for row in cluster_rows}, key=lambda stand: rank.get(stand, 99))
                 source_stands = "-".join(stands)
                 source_count = len(stands)
                 diff_group_key = f"{entity}:{business_key}:{by_business_key_counts[business_key]}"
-                base_data["source_stands"] = source_stands
-                base_data["source_count"] = str(source_count)
-                base_data["is_equal_all"] = "1" if source_count == len(self.stands) else "0"
-                base_data["diff_group_key"] = diff_group_key
+
+                merged_payload["source_stands"] = source_stands
+                merged_payload["source_count"] = str(source_count)
+                merged_payload["is_equal_all"] = "1" if source_count == len(self.stands) else "0"
+                merged_payload["diff_group_key"] = diff_group_key
                 merged_rows.append(
                     MergedRow(
                         entity=entity,
                         business_key=business_key,
-                        row_hash=self._hash_json(base_data),
+                        row_hash=effective_row_hash,
                         source_stands=source_stands,
                         source_count=source_count,
                         is_equal_all=source_count == len(self.stands),
                         diff_group_key=diff_group_key,
-                        merged_data=base_data,
+                        merged_data=merged_payload,
                     )
                 )
-        return merged_rows, by_business_key_counts, set(extra_fields)
+        return merged_rows, by_business_key_counts
+
+    def _build_cluster_payload(
+        self, reference_row: ParsedRow, cluster_rows: list[ParsedRow]
+    ) -> dict[str, str]:
+        """
+        Собирает итоговые значения кластера:
+        - база из эталонной строки;
+        - недостающие/пустые поля дополняются из остальных строк кластера.
+        """
+        payload = dict(reference_row.data)
+        for row in cluster_rows:
+            for field, value in row.data.items():
+                if field not in payload:
+                    payload[field] = value
+                    continue
+                if payload[field] == "" and value != "":
+                    payload[field] = value
+        return payload
 
     def _row_compatible_with_cluster(
         self,
         candidate: ParsedRow,
         cluster: list[ParsedRow],
-        non_extra_fields: list[str],
-        extra_fields: set[str],
     ) -> bool:
         for row in cluster:
-            if not self._rows_compatible(
-                left=row.data,
-                right=candidate.data,
-                non_extra_fields=non_extra_fields,
-                extra_fields=extra_fields,
-            ):
+            if not self._rows_compatible(left=row.data, right=candidate.data):
                 return False
         return True
 
@@ -810,14 +833,10 @@ class SpodPipeline:
         self,
         left: dict[str, str],
         right: dict[str, str],
-        non_extra_fields: list[str],
-        extra_fields: set[str],
     ) -> bool:
-        for field in non_extra_fields:
+        common_fields = set(left.keys()) & set(right.keys())
+        for field in common_fields:
             if left.get(field, "") != right.get(field, ""):
-                return False
-        for field in extra_fields:
-            if field in left and field in right and left.get(field, "") != right.get(field, ""):
                 return False
         return True
 
@@ -951,7 +970,7 @@ class SpodPipeline:
 
         cc = self.config.get("consistency_checks") or {}
         if is_consistency_checks_enabled(cc):
-            append_consistency_sheet(workbook, cc, self._consistency_violations)
+            append_consistency_sheet(workbook, cc, self._consistency_violations, list(self.stands))
 
         workbook.save(excel_path)
         self.logger.info("Excel сформирован: %s", excel_path)

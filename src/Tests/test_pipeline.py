@@ -136,3 +136,33 @@ class TestSpodPipeline(unittest.TestCase):
         stands = pipeline._collect_stands_matching_display_payload(bk, display, rows)  # pylint: disable=protected-access
         self.assertEqual(stands, ["PROM"])
 
+    def test_rows_with_missing_optional_column_are_collapsed(self) -> None:
+        """
+        Если колонка присутствует только в одной строке, но общие поля равны,
+        строки считаются идентичными и схлопываются в одну merged-строку.
+        """
+        pipeline = _build_pipeline()
+        business_key = "C2"
+        rows = [
+            ParsedRow(
+                stand="PROM",
+                entity="CONTEST",
+                row_num=2,
+                data={"CONTEST_CODE": "C2", "NAME": "Contest 2"},
+                business_key=business_key,
+                row_hash="h1",
+            ),
+            ParsedRow(
+                stand="IFT",
+                entity="CONTEST",
+                row_num=2,
+                data={"CONTEST_CODE": "C2", "NAME": "Contest 2", "EXTRA_RULE": "X"},
+                business_key=business_key,
+                row_hash="h2",
+            ),
+        ]
+        merged, _ = pipeline._merge_entity_default("CONTEST", rows)  # pylint: disable=protected-access
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].source_stands, "PROM-IFT")
+        self.assertEqual(merged[0].merged_data.get("EXTRA_RULE"), "X")
+

@@ -310,6 +310,225 @@ class TestConsistencyChecks(unittest.TestCase):
         self.assertIn("CC_U_S", merged[entity][0].merged_data)
         self.assertNotEqual(merged[entity][0].merged_data.get("CC_U_S"), "OK")
 
+    def test_unique_scope_and_non_empty_filters(self) -> None:
+        entity = "E1"
+        config = {
+            "consistency_checks": {
+                "enabled": True,
+                "fail_fast": False,
+                "csv_columns_count": {"entities": {}, "output": {}},
+                "rules": [
+                    {
+                        "id": "u_scope",
+                        "type": "unique",
+                        "entity": entity,
+                        "enabled": True,
+                        "scope": "per_stand",
+                        "key_columns": ["K"],
+                        "unique_scope_conditions": [{"column": "T", "value": "A"}],
+                        "unique_require_non_empty": ["X"],
+                        "output": {},
+                    }
+                ],
+            },
+            "entities": {entity: {"business_key": ["K"]}},
+        }
+        rows = [
+            ParsedRow("PROM", entity, 2, {"K": "1", "T": "A", "X": "ok"}, "1", "h1"),
+            ParsedRow("PROM", entity, 3, {"K": "1", "T": "A", "X": "ok"}, "1", "h2"),
+            ParsedRow("PROM", entity, 4, {"K": "1", "T": "B", "X": "ok"}, "1", "h3"),
+            ParsedRow("PROM", entity, 5, {"K": "1", "T": "A", "X": ""}, "1", "h4"),
+        ]
+        res = execute_consistency_checks(
+            config=config,
+            stands=["PROM"],
+            entities=config["entities"],
+            parsed_by_entity={entity: rows},
+            merged_by_entity={entity: [_merged_one(entity, "1", {"K": "1"})]},
+            field_orders={entity: {"PROM": ["K", "T", "X"]}},
+            logger=_logger(),
+        )
+        vals = [v for v in res.violations if v.rule_id == "u_scope"]
+        self.assertEqual(len(vals), 1)
+
+    def test_referential_with_row_filters(self) -> None:
+        src, tgt = "SRC", "TGT"
+        config = {
+            "consistency_checks": {
+                "enabled": True,
+                "fail_fast": False,
+                "csv_columns_count": {"entities": {}, "output": {}},
+                "rules": [
+                    {
+                        "id": "rflt",
+                        "type": "referential",
+                        "entity": src,
+                        "enabled": True,
+                        "scope": "per_stand",
+                        "source_column": "FK",
+                        "target_entity": tgt,
+                        "target_key_columns": ["ID"],
+                        "src_row_conditions": [{"column": "FLAG", "value": "Y"}],
+                        "ref_row_conditions": [{"column": "ACTIVE", "value": "1"}],
+                        "output": {},
+                    }
+                ],
+            },
+            "entities": {src: {"business_key": ["FK"]}, tgt: {"business_key": ["ID"]}},
+        }
+        parsed = {
+            src: [
+                ParsedRow("PROM", src, 2, {"FK": "10", "FLAG": "Y"}, "10", "h1"),
+                ParsedRow("PROM", src, 3, {"FK": "20", "FLAG": "N"}, "20", "h2"),
+            ],
+            tgt: [
+                ParsedRow("PROM", tgt, 2, {"ID": "10", "ACTIVE": "1"}, "10", "h3"),
+                ParsedRow("PROM", tgt, 3, {"ID": "20", "ACTIVE": "0"}, "20", "h4"),
+            ],
+        }
+        res = execute_consistency_checks(
+            config=config,
+            stands=["PROM"],
+            entities=config["entities"],
+            parsed_by_entity=parsed,
+            merged_by_entity={src: [_merged_one(src, "10", {"FK": "10"})]},
+            field_orders={src: {"PROM": ["FK", "FLAG"]}, tgt: {"PROM": ["ID", "ACTIVE"]}},
+            logger=_logger(),
+        )
+        self.assertFalse(any(v.business_key == "20" for v in res.violations))
+
+    def test_cross_sheet_date_lte_today_with_ref_lookup(self) -> None:
+        src, ref = "REPORT", "SCHEDULE"
+        config = {
+            "consistency_checks": {
+                "enabled": True,
+                "fail_fast": False,
+                "csv_columns_count": {"entities": {}, "output": {}},
+                "rules": [
+                    {
+                        "id": "dt_ref",
+                        "type": "cross_sheet_date_lte_today",
+                        "entity": src,
+                        "enabled": True,
+                        "scope": "per_stand",
+                        "sheet_ref": "TOURNAMENT-SCHEDULE",
+                        "column_src": "TOURNAMENT_CODE",
+                        "column_ref": "TOURNAMENT_CODE",
+                        "column_date_ref": "START_DT",
+                        "date_format": "%Y-%m-%d",
+                        "output": {},
+                    }
+                ],
+            },
+            "entities": {src: {"business_key": ["TOURNAMENT_CODE"]}, ref: {"business_key": ["TOURNAMENT_CODE"]}},
+        }
+        parsed = {
+            src: [ParsedRow("PROM", src, 2, {"TOURNAMENT_CODE": "T1"}, "T1", "h1")],
+            ref: [ParsedRow("PROM", ref, 2, {"TOURNAMENT_CODE": "T1", "START_DT": "2999-01-01"}, "T1", "h2")],
+        }
+        res = execute_consistency_checks(
+            config=config,
+            stands=["PROM"],
+            entities=config["entities"],
+            parsed_by_entity=parsed,
+            merged_by_entity={src: [_merged_one(src, "T1", {"TOURNAMENT_CODE": "T1"})]},
+            field_orders={src: {"PROM": ["TOURNAMENT_CODE"]}, ref: {"PROM": ["TOURNAMENT_CODE", "START_DT"]}},
+            logger=_logger(),
+        )
+        self.assertTrue(any(v.rule_id == "dt_ref" for v in res.violations))
+
+    def test_json_field_equals_column_with_must_not_equal_and_filters(self) -> None:
+        entity = "REWARD"
+        config = {
+            "consistency_checks": {
+                "enabled": True,
+                "fail_fast": False,
+                "csv_columns_count": {"entities": {}, "output": {}},
+                "rules": [
+                    {
+                        "id": "jeq",
+                        "type": "json_field_equals_column",
+                        "entity": entity,
+                        "enabled": True,
+                        "scope": "per_stand",
+                        "json_column": "J",
+                        "json_path": "parentRewardCode",
+                        "compare_column": "REWARD_CODE",
+                        "filter_column": "REWARD_TYPE",
+                        "filter_value": "BADGE",
+                        "json_filter_key": "masterBadge",
+                        "json_filter_value": "N",
+                        "must_not_equal": True,
+                        "output": {},
+                    }
+                ],
+            },
+            "entities": {entity: {"business_key": ["REWARD_CODE"]}},
+        }
+        row = {
+            "J": '{"parentRewardCode":"R1","masterBadge":"N"}',
+            "REWARD_CODE": "R1",
+            "REWARD_TYPE": "BADGE",
+        }
+        parsed = {entity: [ParsedRow("PROM", entity, 2, row, "R1", "h1")]}
+        res = execute_consistency_checks(
+            config=config,
+            stands=["PROM"],
+            entities=config["entities"],
+            parsed_by_entity=parsed,
+            merged_by_entity={entity: [_merged_one(entity, "R1", row)]},
+            field_orders={entity: {"PROM": list(row.keys())}},
+            logger=_logger(),
+        )
+        self.assertTrue(any(v.rule_id == "jeq" for v in res.violations))
+
+    def test_json_priority_unique_per_contest_link_full_mode(self) -> None:
+        reward, link = "REWARD", "REWARD-LINK"
+        config = {
+            "consistency_checks": {
+                "enabled": True,
+                "fail_fast": False,
+                "csv_columns_count": {"entities": {}, "output": {}},
+                "rules": [
+                    {
+                        "id": "jpri",
+                        "type": "json_priority_unique_per_contest_link",
+                        "entity": reward,
+                        "enabled": True,
+                        "scope": "per_stand",
+                        "json_column": "REWARD_ADD_DATA",
+                        "json_path": "priority",
+                        "reward_code_column": "REWARD_CODE",
+                        "link_sheet": link,
+                        "link_contest_column": "CONTEST_CODE",
+                        "link_reward_column": "REWARD_CODE",
+                        "output": {},
+                    }
+                ],
+            },
+            "entities": {reward: {"business_key": ["REWARD_CODE"]}, link: {"business_key": ["CONTEST_CODE", "REWARD_CODE"]}},
+        }
+        parsed = {
+            reward: [
+                ParsedRow("PROM", reward, 2, {"REWARD_CODE": "R1", "REWARD_ADD_DATA": '{"priority":"1"}'}, "R1", "h1"),
+                ParsedRow("PROM", reward, 3, {"REWARD_CODE": "R2", "REWARD_ADD_DATA": '{"priority":"1"}'}, "R2", "h2"),
+            ],
+            link: [
+                ParsedRow("PROM", link, 2, {"CONTEST_CODE": "C1", "REWARD_CODE": "R1"}, "C1|R1", "h3"),
+                ParsedRow("PROM", link, 3, {"CONTEST_CODE": "C1", "REWARD_CODE": "R2"}, "C1|R2", "h4"),
+            ],
+        }
+        res = execute_consistency_checks(
+            config=config,
+            stands=["PROM"],
+            entities=config["entities"],
+            parsed_by_entity=parsed,
+            merged_by_entity={reward: [_merged_one(reward, "R1", {"REWARD_CODE": "R1"})]},
+            field_orders={reward: {"PROM": ["REWARD_CODE", "REWARD_ADD_DATA"]}, link: {"PROM": ["CONTEST_CODE", "REWARD_CODE"]}},
+            logger=_logger(),
+        )
+        self.assertTrue(any(v.rule_id == "jpri" for v in res.violations))
+
 
 def _merged_one(entity: str, bk: str, data: dict[str, str]) -> MergedRow:
     return MergedRow(

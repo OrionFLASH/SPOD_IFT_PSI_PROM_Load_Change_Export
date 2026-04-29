@@ -5,25 +5,31 @@
     "output_db_dir": "OUT/DB",
     "log_dir": "log"
   },
-  "stands": ["IFT", "PROM", "PSI"],
+  "stands": [
+    "IFT",
+    "PROM",
+    "PSI"
+  ],
   "entities": {
     "CONTEST": {
       "file_names": {
-        "IFT": "CONTEST (PROM) 22-04 v0.csv",
+        "IFT": "CONTEST (IFT) 22-04 v0.csv",
         "PROM": "CONTEST (PROM) 22-04 v0.csv",
-        "PSI": "CONTEST (PROM) 22-04 v0.csv"
+        "PSI": "CONTEST (PSI) 22-04 v0.csv"
       },
       "excel_sheet": {
         "freeze_panes": "B2",
         "auto_filter_header": true
       },
-      "business_key": ["CONTEST_CODE"]
+      "business_key": [
+        "CONTEST_CODE"
+      ]
     },
     "EMPLOYEE": {
       "file_names": {
-        "IFT": "EMPLOYEE (PROM) 22-04 v0.csv",
+        "IFT": "EMPLOYEE (IFT) 22-04 v0.csv",
         "PROM": "EMPLOYEE (PROM) 22-04 v0.csv",
-        "PSI": "EMPLOYEE (PROM) 22-04 v0.csv"
+        "PSI": "EMPLOYEE (PSI) 22-04 v0.csv"
       },
       "excel_sheet": {
         "freeze_panes": "B2",
@@ -33,31 +39,42 @@
         "enabled": true,
         "reference_stand": "PROM"
       },
-      "business_key": ["PERSON_NUMBER"]
+      "business_key": [
+        "PERSON_NUMBER"
+      ]
     },
     "GROUP": {
       "file_names": {
-        "IFT": "GROUP (PROM) 17-04 v0.csv",
+        "IFT": "GROUP (IFT) 17-04 v0.csv",
         "PROM": "GROUP (PROM) 17-04 v0.csv",
-        "PSI": "GROUP (PROM) 17-04 v0.csv"
+        "PSI": "GROUP (PSI) 17-04 v0.csv"
       },
       "excel_sheet": {
         "freeze_panes": "B2",
         "auto_filter_header": true
       },
-      "business_key": ["CONTEST_CODE", "GROUP_CODE", "GROUP_VALUE"]
+      "business_key": [
+        "CONTEST_CODE",
+        "GROUP_CODE",
+        "GROUP_VALUE"
+      ]
     },
     "INDICATOR": {
       "file_names": {
-        "IFT": "INDICATOR (PROM) 22-04 v1.csv",
+        "IFT": "INDICATOR (IFT) 22-04 v1.csv",
         "PROM": "INDICATOR (PROM) 22-04 v1.csv",
-        "PSI": "INDICATOR (PROM) 22-04 v1.csv"
+        "PSI": "INDICATOR (PSI) 22-04 v1.csv"
       },
       "excel_sheet": {
         "freeze_panes": "B2",
         "auto_filter_header": true
       },
-      "business_key": ["CONTEST_CODE", "INDICATOR_ADD_CALC_TYPE" ,"INDICATOR_CODE", "N"]
+      "business_key": [
+        "CONTEST_CODE",
+        "INDICATOR_ADD_CALC_TYPE",
+        "INDICATOR_CODE",
+        "N"
+      ]
     },
     "ORG_UNIT_V20": {
       "file_names": {
@@ -69,13 +86,15 @@
         "freeze_panes": "B2",
         "auto_filter_header": true
       },
-      "business_key": ["ORG_UNIT_CODE"]
+      "business_key": [
+        "ORG_UNIT_CODE"
+      ]
     },
     "REPORT": {
       "file_names": {
-        "IFT": "REPORT (PROM) 24-04 v0.csv",
+        "IFT": "REPORT (IFT) 24-04 v0.csv",
         "PROM": "REPORT (PROM) 24-04 v0.csv",
-        "PSI": "REPORT (PROM) 24-04 v0.csv"
+        "PSI": "REPORT (PSI) 24-04 v0.csv"
       },
       "excel_sheet": {
         "freeze_panes": "B2",
@@ -93,51 +112,61 @@
     },
     "REWARD": {
       "file_names": {
-        "IFT": "REWARD (PROM) 24-04 v1.csv",
+        "IFT": "REWARD (IFT) 24-04 v1.csv",
         "PROM": "REWARD (PROM) 24-04 v1.csv",
-        "PSI": "REWARD (PROM) 24-04 v1.csv"
+        "PSI": "REWARD (PSI) 24-04 v1.csv"
       },
       "excel_sheet": {
         "freeze_panes": "B2",
         "auto_filter_header": true
       },
-      "business_key": ["REWARD_CODE"]
+      "business_key": [
+        "REWARD_CODE"
+      ]
     },
     "REWARD-LINK": {
       "file_names": {
-        "IFT": "REWARD-LINK (PROM) 17-04 v0.csv",
+        "IFT": "REWARD-LINK (IFT) 17-04 v0.csv",
         "PROM": "REWARD-LINK (PROM) 17-04 v0.csv",
-        "PSI": "REWARD-LINK (PROM) 17-04 v0.csv"
+        "PSI": "REWARD-LINK (PSI) 17-04 v0.csv"
       },
       "excel_sheet": {
         "freeze_panes": "B2",
         "auto_filter_header": true
       },
-      "business_key": ["CONTEST_CODE", "GROUP_CODE", "REWARD_CODE"]
+      "business_key": [
+        "CONTEST_CODE",
+        "GROUP_CODE",
+        "REWARD_CODE"
+      ]
     },
     "SCHEDULE": {
       "file_names": {
-        "IFT": "SCHEDULE (PROM) 27-04 v0.csv",
+        "IFT": "SCHEDULE (IFT) 27-04 v0.csv",
         "PROM": "SCHEDULE (PROM) 27-04 v0.csv",
-        "PSI": "SCHEDULE (PROM) 27-04 v0.csv"
+        "PSI": "SCHEDULE (PSI) 27-04 v0.csv"
       },
       "excel_sheet": {
         "freeze_panes": "B2",
         "auto_filter_header": true
       },
-      "business_key": ["TOURNAMENT_CODE"]
+      "business_key": [
+        "TOURNAMENT_CODE"
+      ]
     },
     "USER_ROLE": {
       "file_names": {
-        "IFT": "USER_ROLE (PROM) 20-04 v0.csv",
+        "IFT": "USER_ROLE (IFT) 20-04 v0.csv",
         "PROM": "USER_ROLE (PROM) 20-04 v0.csv",
-        "PSI": "USER_ROLE (PROM) 20-04 v0.csv"
+        "PSI": "USER_ROLE (PSI) 20-04 v0.csv"
       },
       "excel_sheet": {
         "freeze_panes": "B2",
         "auto_filter_header": true
       },
-      "business_key": ["RULE_NUM"]
+      "business_key": [
+        "RULE_NUM"
+      ]
     }
   },
   "excel": {
@@ -156,7 +185,10 @@
       "same_key_diff_fill": "FDE9E9",
       "extra_header_fill": "E2F0D9",
       "key_header_fill": "FCE4B2",
-      "fill_priority": ["same_key_diff", "missing_prom"],
+      "fill_priority": [
+        "same_key_diff",
+        "missing_prom"
+      ],
       "service_fields": [
         "source_stands",
         "source_count",
@@ -196,135 +228,917 @@
     "enabled": true,
     "fail_fast": false,
     "summary_sheet_name": "CONSISTENCY",
+    "spod_todo_config_guide": "SPOD-совместимый формат правил поддержан: sheet/sheet_src/sheet_ref, columns_src/columns_ref, json_key, column_compare, format.date_format.",
     "csv_columns_count": {
-      "entities": {},
+      "entities": {
+        "CONTEST": {
+          "expected_columns": 0
+        },
+        "GROUP": {
+          "expected_columns": 0
+        },
+        "INDICATOR": {
+          "expected_columns": 0
+        },
+        "REPORT": {
+          "expected_columns": 0
+        },
+        "REWARD": {
+          "expected_columns": 0
+        },
+        "REWARD-LINK": {
+          "expected_columns": 0
+        },
+        "SCHEDULE": {
+          "expected_columns": 0
+        },
+        "ORG_UNIT_V20": {
+          "expected_columns": 0
+        },
+        "USER_ROLE": {
+          "expected_columns": 0
+        },
+        "EMPLOYEE": {
+          "expected_columns": 0
+        }
+      },
+      "sheets": {
+        "CONTEST-DATA": {
+          "expected_columns": 0
+        },
+        "TOURNAMENT-SCHEDULE": {
+          "expected_columns": 0
+        }
+      },
       "output": {
         "column_suffix_per_stand": "CC_CSV_COLS_S"
       }
     },
     "rules": [
       {
-        "id": "uniq_group_key",
-        "type": "unique",
-        "entity": "GROUP",
-        "enabled": true,
-        "scope": "both",
-        "use_business_key": true,
-        "output": {
-          "column_suffix_per_stand": "CC_UNIQ_GROUP_S",
-          "column_suffix_merged": "CC_UNIQ_GROUP_M"
-        }
-      },
-      {
-        "id": "len_reward_code",
-        "type": "field_length",
-        "entity": "REWARD",
-        "enabled": true,
-        "scope": "per_stand",
-        "fields": {
-          "REWARD_CODE": { "limit": 128, "operator": "<=" }
-        },
-        "output": { "column_suffix_per_stand": "CC_LEN_REWARD_S" }
-      },
-      {
-        "id": "fmt_contest_create_dt",
-        "type": "field_format",
-        "entity": "CONTEST",
-        "enabled": true,
-        "scope": "per_stand",
-        "column": "CREATE_DT",
-        "format_type": "date",
-        "params": { "strftime": "%Y-%m-%d" },
-        "output": { "column_suffix_per_stand": "CC_DT_CREATE_S" }
-      },
-      {
-        "id": "ref_link_to_reward",
-        "type": "referential",
-        "entity": "REWARD-LINK",
-        "enabled": false,
-        "scope": "merged",
-        "source_column": "REWARD_CODE",
-        "target_entity": "REWARD",
-        "target_key_columns": ["REWARD_CODE"],
-        "output": { "column_suffix_merged": "CC_REF_RL_RW_M" }
-      },
-      {
-        "id": "ref_group_to_contest",
-        "type": "referential",
-        "entity": "GROUP",
-        "enabled": false,
-        "scope": "both",
-        "source_column": "CONTEST_CODE",
-        "target_entity": "CONTEST",
-        "target_key_columns": ["CONTEST_CODE"],
-        "output": {
-          "column_suffix_per_stand": "CC_REF_GRP_CT_S",
-          "column_suffix_merged": "CC_REF_GRP_CT_M"
-        }
-      },
-      {
-        "id": "ref_composite_example",
-        "type": "referential_composite",
-        "entity": "REWARD-LINK",
-        "enabled": false,
-        "scope": "per_stand",
-        "source_columns": ["CONTEST_CODE", "GROUP_CODE", "REWARD_CODE"],
-        "target_entity": "REWARD-LINK",
-        "target_key_columns": ["CONTEST_CODE", "GROUP_CODE", "REWARD_CODE"],
-        "output": { "column_suffix_per_stand": "CC_REF_SELF_S" }
-      },
-      {
-        "id": "cross_dt_create_lte_today",
-        "type": "cross_sheet_date_lte_today",
-        "entity": "CONTEST",
-        "enabled": true,
-        "scope": "per_stand",
-        "column": "CREATE_DT",
-        "date_format": "%Y-%m-%d",
-        "output": { "column_suffix_per_stand": "CC_DT_LTE_S" }
-      },
-      {
-        "id": "json_contest_feature",
+        "id": "spod_json_contest_data",
         "type": "json_spod_format",
-        "entity": "CONTEST",
         "enabled": true,
-        "scope": "per_stand",
+        "sheet": "CONTEST-DATA",
         "json_column": "CONTEST_FEATURE",
+        "json_required": true,
+        "numeric_value_keys": [
+          "minNumber",
+          "accuracy"
+        ],
+        "output": {
+          "column_suffix_per_stand": "CC_JSON_CONTEST_S"
+        }
+      },
+      {
+        "id": "spod_json_contest_period",
+        "type": "json_spod_format",
+        "enabled": true,
+        "sheet": "CONTEST-DATA",
+        "json_column": "CONTEST_PERIOD",
         "json_required": false,
-        "output": { "column_suffix_per_stand": "CC_JSON_FEAT_S" }
+        "numeric_value_keys": [
+          "period_code",
+          "criterion_mark_value"
+        ],
+        "output": {
+          "column_suffix_per_stand": "CC_JSON_PERIOD_S"
+        }
       },
       {
-        "id": "json_equals_vid",
-        "type": "json_field_equals_column",
-        "entity": "CONTEST",
-        "enabled": false,
-        "scope": "per_stand",
-        "json_column": "CONTEST_FEATURE",
-        "json_path": "vid",
-        "compare_column": "CONTEST_TYPE",
-        "output": { "column_suffix_per_stand": "CC_JSON_EQ_S" }
-      },
-      {
-        "id": "json_in_product",
-        "type": "json_field_in_column",
-        "entity": "CONTEST",
-        "enabled": false,
-        "scope": "per_stand",
-        "json_column": "CONTEST_FEATURE",
-        "json_path": "vid",
-        "values_column": "PRODUCT",
-        "values_separator": ";",
-        "output": { "column_suffix_per_stand": "CC_JSON_IN_S" }
-      },
-      {
-        "id": "json_priority_unique",
-        "type": "json_priority_unique_per_contest_link",
-        "entity": "REWARD",
-        "enabled": false,
-        "scope": "per_stand",
+        "id": "spod_json_reward_add_data",
+        "type": "json_spod_format",
+        "enabled": true,
+        "sheet": "REWARD",
         "json_column": "REWARD_ADD_DATA",
-        "json_path": "priority",
-        "output": { "column_suffix_per_stand": "CC_JSON_PRI_S" }
+        "json_required": true,
+        "output": {
+          "column_suffix_per_stand": "CC_JSON_REWARD_S"
+        }
+      },
+      {
+        "id": "spod_json_tournament_filter_period",
+        "type": "json_spod_format",
+        "enabled": true,
+        "sheet": "TOURNAMENT-SCHEDULE",
+        "json_column": "FILTER_PERIOD_ARR",
+        "json_required": false,
+        "numeric_value_keys": [
+          "period_code",
+          "criterion_mark_value"
+        ],
+        "output": {
+          "column_suffix_per_stand": "CC_JSON_FILPER_S"
+        }
+      },
+      {
+        "id": "spod_json_tournament_target_type",
+        "type": "json_spod_format",
+        "enabled": true,
+        "sheet": "TOURNAMENT-SCHEDULE",
+        "json_column": "TARGET_TYPE",
+        "json_required": false,
+        "output": {
+          "column_suffix_per_stand": "CC_JSON_TARGET_S"
+        }
+      },
+      {
+        "id": "spod_json_indicator_filter",
+        "type": "json_spod_format",
+        "enabled": true,
+        "sheet": "INDICATOR",
+        "json_column": "INDICATOR_FILTER",
+        "json_required": false,
+        "output": {
+          "column_suffix_per_stand": "CC_JSON_IND_S"
+        }
+      },
+      {
+        "id": "example_referential_row_filters",
+        "type": "referential",
+        "enabled": false,
+        "sheet_src": "CONTEST-DATA",
+        "column_src": "CONTEST_CODE",
+        "sheet_ref": "INDICATOR",
+        "column_ref": "CONTEST_CODE",
+        "src_row_conditions": [
+          {
+            "column": "BUSINESS_STATUS",
+            "op": "=",
+            "value": "АКТИВНЫЙ"
+          },
+          {
+            "column": "CONTEST_TYPE",
+            "op": "=",
+            "value": "ИНДИВИДУАЛЬНЫЙ НАКОПИТЕЛЬНЫЙ"
+          },
+          {
+            "column": "CREATE_DT",
+            "op": "<>",
+            "value": "2025-01-01"
+          }
+        ],
+        "ref_row_conditions": [],
+        "output": {
+          "column_suffix_per_stand": "CC_REF_EXAMPLE_S"
+        }
+      },
+      {
+        "id": "ref_group_contest_code_in_contest_data",
+        "type": "referential",
+        "enabled": true,
+        "sheet_src": "GROUP",
+        "column_src": "CONTEST_CODE",
+        "sheet_ref": "CONTEST-DATA",
+        "column_ref": "CONTEST_CODE",
+        "output": {
+          "column_suffix_per_stand": "CC_REF_GRP_CT_S"
+        }
+      },
+      {
+        "id": "ref_indicator_contest_code_in_contest_data",
+        "type": "referential",
+        "enabled": true,
+        "sheet_src": "INDICATOR",
+        "column_src": "CONTEST_CODE",
+        "sheet_ref": "CONTEST-DATA",
+        "column_ref": "CONTEST_CODE",
+        "output": {
+          "column_suffix_per_stand": "CC_REF_IND_CT_S"
+        }
+      },
+      {
+        "id": "ref_reward_link_contest_code_in_contest_data",
+        "type": "referential",
+        "enabled": true,
+        "sheet_src": "REWARD-LINK",
+        "column_src": "CONTEST_CODE",
+        "sheet_ref": "CONTEST-DATA",
+        "column_ref": "CONTEST_CODE",
+        "output": {
+          "column_suffix_per_stand": "CC_REF_RL_CT_S"
+        }
+      },
+      {
+        "id": "ref_reward_link_reward_code_in_reward",
+        "type": "referential",
+        "enabled": true,
+        "sheet_src": "REWARD-LINK",
+        "column_src": "REWARD_CODE",
+        "sheet_ref": "REWARD",
+        "column_ref": "REWARD_CODE",
+        "output": {
+          "column_suffix_per_stand": "CC_REF_RL_RW_S"
+        }
+      },
+      {
+        "id": "ref_employee_org_unit_code_in_org_unit_v20",
+        "type": "referential",
+        "enabled": true,
+        "sheet_src": "EMPLOYEE",
+        "column_src": "ORG_UNIT_CODE",
+        "sheet_ref": "ORG_UNIT_V20",
+        "column_ref": "ORG_UNIT_CODE",
+        "output": {
+          "column_suffix_per_stand": "CC_REF_EMP_OU_S"
+        }
+      },
+      {
+        "id": "scenario_1",
+        "type": "referential",
+        "enabled": true,
+        "sheet_src": "TOURNAMENT-SCHEDULE",
+        "column_src": "CONTEST_CODE",
+        "sheet_ref": "CONTEST-DATA",
+        "column_ref": "CONTEST_CODE",
+        "output": {
+          "column_suffix_per_stand": "CC_REF_SCH_CT_S"
+        }
+      },
+      {
+        "id": "scenario_16",
+        "type": "referential",
+        "enabled": true,
+        "sheet_src": "TOURNAMENT-SCHEDULE",
+        "column_src": "CONTEST_CODE",
+        "sheet_ref": "INDICATOR",
+        "column_ref": "CONTEST_CODE",
+        "output": {
+          "column_suffix_per_stand": "CC_REF_SCH_IND_S"
+        }
+      },
+      {
+        "id": "scenario_20",
+        "type": "referential",
+        "enabled": true,
+        "sheet_src": "TOURNAMENT-SCHEDULE",
+        "column_src": "CONTEST_CODE",
+        "sheet_ref": "GROUP",
+        "column_ref": "CONTEST_CODE",
+        "output": {
+          "column_suffix_per_stand": "CC_REF_SCH_GRP_S"
+        }
+      },
+      {
+        "id": "ref_contest_data_group",
+        "type": "referential",
+        "enabled": true,
+        "sheet_src": "CONTEST-DATA",
+        "column_src": "CONTEST_CODE",
+        "sheet_ref": "GROUP",
+        "column_ref": "CONTEST_CODE",
+        "output": {
+          "column_suffix_per_stand": "CC_REF_CT_GRP_S"
+        }
+      },
+      {
+        "id": "ref_indicator_group",
+        "type": "referential",
+        "enabled": true,
+        "sheet_src": "INDICATOR",
+        "column_src": "CONTEST_CODE",
+        "sheet_ref": "GROUP",
+        "column_ref": "CONTEST_CODE",
+        "output": {
+          "column_suffix_per_stand": "CC_REF_IND_GRP_S"
+        }
+      },
+      {
+        "id": "ref_report_contest_data",
+        "type": "referential",
+        "enabled": true,
+        "sheet_src": "REPORT",
+        "column_src": "CONTEST_CODE",
+        "sheet_ref": "CONTEST-DATA",
+        "column_ref": "CONTEST_CODE",
+        "output": {
+          "column_suffix_per_stand": "CC_REF_RPT_CT_S"
+        }
+      },
+      {
+        "id": "ref_reward_reward_link",
+        "type": "referential",
+        "enabled": true,
+        "sheet_src": "REWARD",
+        "column_src": "REWARD_CODE",
+        "sheet_ref": "REWARD-LINK",
+        "column_ref": "REWARD_CODE",
+        "output": {
+          "column_suffix_per_stand": "CC_REF_RW_RL_S"
+        }
+      },
+      {
+        "id": "ref_composite_reward_link_pair_in_group",
+        "type": "referential_composite",
+        "enabled": true,
+        "sheet_src": "REWARD-LINK",
+        "columns_src": [
+          "CONTEST_CODE",
+          "GROUP_CODE"
+        ],
+        "sheet_ref": "GROUP",
+        "columns_ref": [
+          "CONTEST_CODE",
+          "GROUP_CODE"
+        ],
+        "output": {
+          "column_suffix_per_stand": "CC_REF_RL_GRPPAIR_S"
+        }
+      },
+      {
+        "id": "ref_composite_group_pair_in_reward_link",
+        "type": "referential_composite",
+        "enabled": true,
+        "sheet_src": "GROUP",
+        "columns_src": [
+          "CONTEST_CODE",
+          "GROUP_CODE"
+        ],
+        "sheet_ref": "REWARD-LINK",
+        "columns_ref": [
+          "CONTEST_CODE",
+          "GROUP_CODE"
+        ],
+        "output": {
+          "column_suffix_per_stand": "CC_REF_GRP_RLPAIR_S"
+        }
+      },
+      {
+        "id": "ref_composite_report_schedule",
+        "type": "referential_composite",
+        "enabled": true,
+        "sheet_src": "REPORT",
+        "columns_src": [
+          "TOURNAMENT_CODE",
+          "CONTEST_CODE"
+        ],
+        "sheet_ref": "TOURNAMENT-SCHEDULE",
+        "columns_ref": [
+          "TOURNAMENT_CODE",
+          "CONTEST_CODE"
+        ],
+        "output": {
+          "column_suffix_per_stand": "CC_REF_RPT_SCHPAIR_S"
+        }
+      },
+      {
+        "id": "reward_add_data_badge",
+        "type": "json_field_equals_column",
+        "enabled": true,
+        "sheet": "REWARD",
+        "json_column": "REWARD_ADD_DATA",
+        "json_key": "parentRewardCode",
+        "column_compare": "REWARD_CODE",
+        "filter_column": "REWARD_TYPE",
+        "filter_value": "BADGE",
+        "json_filter_key": "masterBadge",
+        "json_filter_value": "Y",
+        "output": {
+          "column_suffix_per_stand": "CC_JSON_BADGE_Y_S"
+        }
+      },
+      {
+        "id": "reward_add_data_label",
+        "type": "json_field_equals_column",
+        "enabled": true,
+        "sheet": "REWARD",
+        "json_column": "REWARD_ADD_DATA",
+        "json_key": "parentRewardCode",
+        "column_compare": "REWARD_CODE",
+        "filter_column": "REWARD_TYPE",
+        "filter_value": "LABEL",
+        "output": {
+          "column_suffix_per_stand": "CC_JSON_LABEL_S"
+        }
+      },
+      {
+        "id": "reward_add_data_badge_n",
+        "type": "json_field_equals_column",
+        "enabled": true,
+        "sheet": "REWARD",
+        "json_column": "REWARD_ADD_DATA",
+        "json_key": "parentRewardCode",
+        "column_compare": "REWARD_CODE",
+        "filter_column": "REWARD_TYPE",
+        "filter_value": "BADGE",
+        "json_filter_key": "masterBadge",
+        "json_filter_value": "N",
+        "must_not_equal": true,
+        "output": {
+          "column_suffix_per_stand": "CC_JSON_BADGE_N_S"
+        }
+      },
+      {
+        "id": "reward_parent_in_reward_code",
+        "type": "json_field_in_column",
+        "enabled": true,
+        "sheet": "REWARD",
+        "json_column": "REWARD_ADD_DATA",
+        "json_key": "parentRewardCode",
+        "column_in_sheet": "REWARD_CODE",
+        "output": {
+          "column_suffix_per_stand": "CC_JSON_PARENT_IN_RW_S"
+        }
+      },
+      {
+        "id": "reward_priority_unique_per_contest",
+        "type": "json_priority_unique_per_contest_link",
+        "enabled": true,
+        "sheet": "REWARD",
+        "reward_code_column": "REWARD_CODE",
+        "json_column": "REWARD_ADD_DATA",
+        "json_key": "priority",
+        "link_sheet": "REWARD-LINK",
+        "link_contest_column": "CONTEST_CODE",
+        "link_reward_column": "REWARD_CODE",
+        "output": {
+          "column_suffix_per_stand": "CC_JSON_PRIORITY_CONTEST_S"
+        }
+      },
+      {
+        "id": "report_tournament_start_dt_not_future",
+        "type": "cross_sheet_date_lte_today",
+        "enabled": true,
+        "sheet_src": "REPORT",
+        "column_src": "TOURNAMENT_CODE",
+        "sheet_ref": "TOURNAMENT-SCHEDULE",
+        "column_ref": "TOURNAMENT_CODE",
+        "column_date_ref": "START_DT",
+        "date_format": "YYYY-MM-DD",
+        "output": {
+          "column_suffix_per_stand": "CC_DT_TOURN_NOT_FUTURE_S"
+        }
+      },
+      {
+        "id": "unique_contest_data",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "CONTEST-DATA",
+        "key_columns": [
+          "CONTEST_CODE"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [],
+        "unique_require_non_empty": [],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_CONTEST_S"
+        }
+      },
+      {
+        "id": "unique_group_contest_code_group_code_group_value",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "GROUP",
+        "key_columns": [
+          "CONTEST_CODE",
+          "GROUP_CODE",
+          "GROUP_VALUE"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [],
+        "unique_require_non_empty": [],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_GROUP_S"
+        }
+      },
+      {
+        "id": "unique_indicator_1",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "INDICATOR",
+        "key_columns": [
+          "CONTEST_CODE",
+          "INDICATOR_ADD_CALC_TYPE",
+          "INDICATOR_CODE"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [],
+        "unique_require_non_empty": [],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_IND_MAIN_S"
+        }
+      },
+      {
+        "id": "unique_indicator_n",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "INDICATOR",
+        "key_columns": [
+          "N"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [],
+        "unique_require_non_empty": [],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_IND_N_S"
+        }
+      },
+      {
+        "id": "unique_report",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "REPORT",
+        "key_columns": [
+          "MANAGER_PERSON_NUMBER",
+          "TOURNAMENT_CODE",
+          "CONTEST_CODE"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [],
+        "unique_require_non_empty": [],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_REPORT_S"
+        }
+      },
+      {
+        "id": "unique_reward",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "REWARD",
+        "key_columns": [
+          "REWARD_CODE"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [],
+        "unique_require_non_empty": [],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_REWARD_S"
+        }
+      },
+      {
+        "id": "unique_reward_link_contest_code_group_code_reward_code",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "REWARD-LINK",
+        "key_columns": [
+          "CONTEST_CODE",
+          "GROUP_CODE",
+          "REWARD_CODE"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [],
+        "unique_require_non_empty": [],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_RL_CGR_S"
+        }
+      },
+      {
+        "id": "unique_reward_link_reward",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "REWARD-LINK",
+        "key_columns": [
+          "REWARD_CODE"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [],
+        "unique_require_non_empty": [],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_RL_RW_S"
+        }
+      },
+      {
+        "id": "unique_employee_person",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "EMPLOYEE",
+        "key_columns": [
+          "PERSON_NUMBER"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [],
+        "unique_require_non_empty": [],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_EMP_PN_S"
+        }
+      },
+      {
+        "id": "unique_employee_person_add",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "EMPLOYEE",
+        "key_columns": [
+          "PERSON_NUMBER_ADD"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [],
+        "unique_require_non_empty": [],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_EMP_PNA_S"
+        }
+      },
+      {
+        "id": "unique_employee_kpk_gosb",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "EMPLOYEE",
+        "key_columns": [
+          "POSITION_NAME",
+          "KPK_CODE",
+          "ORG_UNIT_CODE"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [
+          {
+            "column": "POSITION_NAME",
+            "value": "КПК"
+          }
+        ],
+        "unique_require_non_empty": [
+          "KPK_CODE"
+        ],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_EMP_KPK_S"
+        }
+      },
+      {
+        "id": "unique_schedule_1",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "TOURNAMENT-SCHEDULE",
+        "key_columns": [
+          "TOURNAMENT_CODE"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [],
+        "unique_require_non_empty": [],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_SCH_TOURN_S"
+        }
+      },
+      {
+        "id": "unique_org_unit",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "ORG_UNIT_V20",
+        "key_columns": [
+          "ORG_UNIT_CODE"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [],
+        "unique_require_non_empty": [],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_OU_CODE_S"
+        }
+      },
+      {
+        "id": "unique_tb_gosb",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "ORG_UNIT_V20",
+        "key_columns": [
+          "TB_CODE",
+          "GOSB_CODE"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [],
+        "unique_require_non_empty": [],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_OU_TBGOSB_S"
+        }
+      },
+      {
+        "id": "unique_user_role",
+        "type": "unique",
+        "enabled": true,
+        "sheet": "USER_ROLE",
+        "key_columns": [
+          "RULE_NUM"
+        ],
+        "unique_scope_mode": "all",
+        "unique_scope_conditions": [],
+        "unique_require_non_empty": [],
+        "output": {
+          "column_suffix_per_stand": "CC_UNIQ_UR_S"
+        }
+      },
+      {
+        "id": "field_length_org_unit",
+        "type": "field_length",
+        "enabled": true,
+        "sheet": "ORG_UNIT_V20",
+        "fields": {
+          "TB_FULL_NAME": {
+            "limit": 100,
+            "operator": "<="
+          },
+          "GOSB_NAME": {
+            "limit": 100,
+            "operator": "<="
+          },
+          "GOSB_SHORT_NAME": {
+            "limit": 20,
+            "operator": "<="
+          }
+        },
+        "output": {
+          "column_suffix_per_stand": "CC_LEN_OU_S"
+        }
+      },
+      {
+        "id": "field_length_employee",
+        "type": "field_length",
+        "enabled": true,
+        "sheet": "EMPLOYEE",
+        "fields": {
+          "PERSON_NUMBER": {
+            "limit": 20,
+            "operator": "="
+          },
+          "PERSON_NUMBER_ADD": {
+            "limit": 20,
+            "operator": "="
+          }
+        },
+        "output": {
+          "column_suffix_per_stand": "CC_LEN_EMP_S"
+        }
+      },
+      {
+        "id": "field_length_report",
+        "type": "field_length",
+        "enabled": true,
+        "sheet": "REPORT",
+        "fields": {
+          "MANAGER_PERSON_NUMBER": {
+            "limit": 20,
+            "operator": "="
+          }
+        },
+        "output": {
+          "column_suffix_per_stand": "CC_LEN_REPORT_S"
+        }
+      },
+      {
+        "id": "format_report_contest_date",
+        "type": "field_format",
+        "enabled": true,
+        "sheet": "REPORT",
+        "field": "CONTEST_DATE",
+        "format": {
+          "type": "date",
+          "date_format": "YYYY-MM-DD",
+          "allow_empty": false
+        },
+        "output": {
+          "column_suffix_per_stand": "CC_FMT_RPT_CONTEST_DT_S"
+        }
+      },
+      {
+        "id": "format_contest_data_create_dt",
+        "type": "field_format",
+        "enabled": true,
+        "sheet": "CONTEST-DATA",
+        "field": "CREATE_DT",
+        "format": {
+          "type": "date",
+          "date_format": "YYYY-MM-DD",
+          "allow_empty": false
+        },
+        "output": {
+          "column_suffix_per_stand": "CC_FMT_CT_CREATE_DT_S"
+        }
+      },
+      {
+        "id": "format_contest_data_close_dt",
+        "type": "field_format",
+        "enabled": true,
+        "sheet": "CONTEST-DATA",
+        "field": "CLOSE_DT",
+        "format": {
+          "type": "date",
+          "date_format": "YYYY-MM-DD",
+          "allow_empty": false,
+          "special_values": [
+            "4000-01-01"
+          ]
+        },
+        "output": {
+          "column_suffix_per_stand": "CC_FMT_CT_CLOSE_DT_S"
+        }
+      },
+      {
+        "id": "format_schedule_start_dt",
+        "type": "field_format",
+        "enabled": true,
+        "sheet": "TOURNAMENT-SCHEDULE",
+        "field": "START_DT",
+        "format": {
+          "type": "date",
+          "date_format": "YYYY-MM-DD",
+          "allow_empty": false
+        },
+        "output": {
+          "column_suffix_per_stand": "CC_FMT_SCH_START_DT_S"
+        }
+      },
+      {
+        "id": "format_schedule_end_dt",
+        "type": "field_format",
+        "enabled": true,
+        "sheet": "TOURNAMENT-SCHEDULE",
+        "field": "END_DT",
+        "format": {
+          "type": "date",
+          "date_format": "YYYY-MM-DD",
+          "allow_empty": false,
+          "special_values": [
+            "4000-01-01"
+          ]
+        },
+        "output": {
+          "column_suffix_per_stand": "CC_FMT_SCH_END_DT_S"
+        }
+      },
+      {
+        "id": "format_schedule_result_dt",
+        "type": "field_format",
+        "enabled": true,
+        "sheet": "TOURNAMENT-SCHEDULE",
+        "field": "RESULT_DT",
+        "format": {
+          "type": "date",
+          "date_format": "YYYY-MM-DD",
+          "allow_empty": true
+        },
+        "output": {
+          "column_suffix_per_stand": "CC_FMT_SCH_RESULT_DT_S"
+        }
+      },
+      {
+        "id": "format_report_plan_value",
+        "type": "field_format",
+        "enabled": true,
+        "sheet": "REPORT",
+        "field": "PLAN_VALUE",
+        "format": {
+          "type": "decimal",
+          "decimal_places": 5,
+          "allow_empty": false
+        },
+        "output": {
+          "column_suffix_per_stand": "CC_FMT_RPT_PLAN_S"
+        }
+      },
+      {
+        "id": "format_report_fact_value",
+        "type": "field_format",
+        "enabled": true,
+        "sheet": "REPORT",
+        "field": "FACT_VALUE",
+        "format": {
+          "type": "decimal",
+          "decimal_places": 5,
+          "allow_empty": false
+        },
+        "output": {
+          "column_suffix_per_stand": "CC_FMT_RPT_FACT_S"
+        }
+      },
+      {
+        "id": "format_report_manager_person_number",
+        "type": "field_format",
+        "enabled": true,
+        "sheet": "REPORT",
+        "field": "MANAGER_PERSON_NUMBER",
+        "format": {
+          "type": "fixed_length_digits",
+          "length": 20,
+          "allow_empty": false
+        },
+        "output": {
+          "column_suffix_per_stand": "CC_FMT_RPT_MPN_S"
+        }
+      },
+      {
+        "id": "format_employee_person_number",
+        "type": "field_format",
+        "enabled": true,
+        "sheet": "EMPLOYEE",
+        "field": "PERSON_NUMBER",
+        "format": {
+          "type": "fixed_length_digits",
+          "length": 20,
+          "allow_empty": false
+        },
+        "output": {
+          "column_suffix_per_stand": "CC_FMT_EMP_PN_S"
+        }
+      },
+      {
+        "id": "format_employee_person_number_add",
+        "type": "field_format",
+        "enabled": true,
+        "sheet": "EMPLOYEE",
+        "field": "PERSON_NUMBER_ADD",
+        "format": {
+          "type": "fixed_length_digits",
+          "length": 20,
+          "allow_empty": false
+        },
+        "output": {
+          "column_suffix_per_stand": "CC_FMT_EMP_PNA_S"
+        }
       }
     ]
   },
@@ -348,4 +1162,3 @@
     "parallel_workers": "auto"
   }
 }
-

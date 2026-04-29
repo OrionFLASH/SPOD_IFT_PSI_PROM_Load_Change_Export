@@ -53,7 +53,7 @@
 | Экспорт Excel в `OUT/XLS`, форматирование из `config.json` | **[сделано]** |
 | Лист `SUMMARY` | **[сделано]** |
 | Лист `DIFF_REPORT` (`excel.diff_report_sheet`) | **[сделано]** |
-| Проверки консистентности (`consistency_checks`), лист `CONSISTENCY`, колонки `CONSIST_*` / `CC_*` | **[сделано]** |
+| Проверки консистентности (`consistency_checks`), SPOD-совместимые правила, лист `CONSISTENCY`, колонки `CONSIST_*` / `CC_*` | **[сделано]** |
 | Логи INFO/DEBUG в `log/` по шаблону имён и формату DEBUG | **[сделано]** |
 | Консольная аналитика и профилирование этапов | **[сделано]** |
 | Параллельная обработка (`parallel_workers`, `--parallel-workers`) | **[сделано]** |
@@ -100,7 +100,7 @@
      - `SUMMARY`;
      - по одному листу на каждую сущность (`CONTEST`, `EMPLOYEE`, ...);
      - при `excel.diff_report_sheet.enabled=true` — лист **`DIFF_REPORT`** (сводка конфликтов);
-     - при `consistency_checks.enabled=true` — лист **`CONSISTENCY`** (таблица нарушений) и при необходимости колонки на листах сущностей (`CONSIST_*`, `CC_*` — см. раздел **`consistency_checks`** в конфиге).
+    - при `consistency_checks.enabled=true` — лист **`CONSISTENCY`** (свод по правилам и стендам) и при необходимости колонки на листах сущностей (`CONSIST_*`, `CC_*` — см. раздел **`consistency_checks`** в конфиге).
    - Добавляются служебные колонки (полный перечень задаётся в `config.json`, в т.ч.):
      - `source_stands`;
      - `source_count`;
@@ -128,6 +128,10 @@
      - были ли обновления БД или хэши совпали;
      - сколько найдено совпадений и разночтений;
      - статистика по каждой сущности.
+  - После `consistency_checks` дополнительно печатается таблица нарушений:
+    - строки: `rule_id` + `rule_type`;
+    - колонки: стенды из `stands` (`IFT` / `PROM` / `PSI`) + `NO_STAND` + `TOTAL`;
+    - значения: число найденных нарушений по каждому правилу в разрезе стендов.
 
 ## Список переменных и функций
 
@@ -232,14 +236,21 @@
 - **`consistency_checks`** (по образцу [SPOD_PARCE_LOAD](https://github.com/OrionFLASH/SPOD_PARCE_LOAD)) — построчные и сводные проверки после merge:
   - `enabled` — включить этап (`false` — выключить); **если ключа нет, а секция `consistency_checks` непустая, проверки считаются включёнными** (чтобы не отключались молча при забытых `rules`); `fail_fast` — прервать запуск при первой ошибке с `severity=error`;
   - `summary_sheet_name` — имя листа сводки (по умолчанию `CONSISTENCY`);
+  - поддерживается формат правил SPOD (`sheet`, `sheet_src`, `sheet_ref`, `column_src`, `column_ref`, `columns_src`, `columns_ref`, `json_key`, `column_compare`, `format.date_format`);
   - **`csv_columns_count`** — ожидаемое число колонок по сущности (`entities.<ENTITY>.expected_columns`, значение **`0`** = эталон как максимум числа колонок заголовка по стендам); блок **`output.column_suffix_per_stand`** — имя колонки статуса на листе сущности;
   - **`rules`** — массив правил с полями `id`, `type`, `entity`, `enabled`, **`scope`**: `per_stand` | `merged` | `both` (при `both` проверка выполняется и по сырым строкам стенда, и по merged; в Excel могут быть две колонки через `output.column_suffix_per_stand` / `column_suffix_merged`);
   - поддерживаемые **`type`**: `unique`, `field_length`, `field_format` (подтипы `date`, `decimal`, `fixed_length_digits`), `referential`, `referential_composite`, `cross_sheet_date_lte_today`, `json_spod_format`, `json_field_equals_column`, `json_field_in_column`, `json_priority_unique_per_contest_link`.
+  - `field_format.decimal` поддерживает `decimal_places`; `date` — `special_values` и `allow_empty`.
+  - `referential` / `referential_composite` поддерживают `src_row_conditions` / `ref_row_conditions`.
+  - `json_field_equals_column` поддерживает `must_not_equal`, `filter_column/filter_value`, `json_filter_key/json_filter_value`.
+  - `json_field_in_column` поддерживает `column_in_sheet` (проверка значения JSON-ключа по множеству значений колонки листа).
 
 ### `src/spod_exporter/consistency_checks.py`
 
 - `execute_consistency_checks(...)` — запуск правил; дополняет `MergedRow.merged_data` агрегатами по ключу.
-- `append_consistency_sheet(workbook, cc, violations)` — добавляет лист сводки в книгу Excel.
+- `append_consistency_sheet(workbook, cc, violations, stands)` — добавляет лист сводки в книгу Excel:
+  - формат листа `CONSISTENCY`: `ТИП ПРОВЕРКИ`, `Описание`, `таблица источник`, `поле источник`, `таблица где проверяем`, `поле для проверки`, `параметр сравнения`, `комментарий`, `check_id`, `rule_type`, `scope`, `stand`, `total_rows`, `violations`, `sample`;
+  - `sample` включает контекст места ошибки: стенд, строка, business_key и сообщение.
 
 ## Формат логирования
 
@@ -280,6 +291,10 @@ DEBUG-строка:
 ### v0.2.0 (текущая ветка развития)
 
 - **[сделано]** Проверки консистентности: раздел `consistency_checks` в `config.json`, модуль `consistency_checks.py`, лист **`CONSISTENCY`**, колонки на листах сущностей, интеграция в пайплайн; включение по умолчанию при непустой секции без ключа `enabled` (`is_consistency_checks_enabled`); строка-итог на `CONSISTENCY` при нуле нарушений; правило **`uniq_group_key`** для GROUP (`scope: both`); выравнивание `business_key` в нарушениях unique с `ParsedRow`.
+- **[сделано]** SPOD-совместимость правил консистентности: нормализация схемы правил (`sheet_*`, `column_*`, `json_key`, `format`) и расширение типов проверок.
+- **[сделано]** Новый формат листа `CONSISTENCY`: свод по правилам в разрезе стендов (`IFT/PROM/PSI` + `NO_STAND`) с колонкой `sample` и деталями места ошибки.
+- **[сделано]** Консольная таблица после консистентности: подсчёт нарушений по `rule_id`/стендам.
+- **[сделано]** Входные CSV в `IN/SPOD/IFT` и `IN/SPOD/PSI` переименованы с `(PROM)` на `(IFT)` / `(PSI)`; `config.json` синхронизирован с новыми именами файлов.
 - **[сделано]** Лист Excel `DIFF_REPORT` и настройка `excel.diff_report_sheet` в `config.json`.
 - **[сделано]** Расширенный набор служебных полей (`diff_columns`, `diff_positions`, `diff_snippets` и др. по конфигу).
 - **[сделано]** Параллельная обработка файлов/сущностей с авто-числом потоков или явным `--parallel-workers`.
