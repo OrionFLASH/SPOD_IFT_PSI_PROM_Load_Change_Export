@@ -85,3 +85,8 @@
   - Переименованы CSV в `IN/SPOD/IFT` и `IN/SPOD/PSI`: `(PROM)` -> `(IFT)` / `(PSI)`.
   - Обновлены `entities.*.file_names.*` в `config.json`.
 
+- [v] 16. Применить к листу `CONSISTENCY` те же правила форматирования Excel, что и к остальным листам
+  - Подключено форматирование через `_format_sheet` (границы, выравнивание, перенос).
+  - Автоподбор ширины колонок ограничен `max_column_width=150` из `excel.formatting_defaults`.
+  - В `config.json` добавлен блок `excel.consistency_sheet` (`freeze_panes`, `auto_filter_header`).
+

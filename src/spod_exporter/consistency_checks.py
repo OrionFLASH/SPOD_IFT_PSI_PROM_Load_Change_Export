@@ -1449,7 +1449,7 @@ def append_consistency_sheet(
     cc: dict[str, Any],
     violations: list[ConsistencyViolation],
     stands: list[str] | None = None,
-) -> None:
+) -> Any:
     """Добавляет лист CONSISTENCY: свод по правилам в разрезе стендов."""
     stands = list(stands or [])
 
@@ -1647,3 +1647,4 @@ def append_consistency_sheet(
         )
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = "A1:O1"
+    return sheet

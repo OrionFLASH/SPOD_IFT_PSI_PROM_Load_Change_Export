@@ -214,3 +214,4 @@
 | 2026-04-28 | Реализованы C-01…C-10, лист **`CONSISTENCY`**, `scope`/`both`, unit-тесты `test_consistency_checks.py`, обновлены README и конфиг. |
 | 2026-04-28 | Включён **`uniq_group_key`** для GROUP, `is_consistency_checks_enabled`, интеграционный тест на дубли; синхронизация ТЗ, системных требований, плана работ, отчётов тестов. |
 | 2026-04-29 | Расширена SPOD-совместимость `consistency_checks` (алиасы `sheet_*`, `json_key`, `format`), обновлён `config.json` с расширенным набором правил, лист `CONSISTENCY` переведён в сводный формат по правилам и стендам с `sample` (место ошибки), добавлена консольная таблица нарушений по правилам/стендам; переименованы входные CSV в `IN/SPOD/IFT|PSI` и синхронизированы `entities.*.file_names`. |
+| 2026-04-29 | Для листа `CONSISTENCY` применено общее форматирование Excel (границы, перенос, автоширина с лимитом `150`) через `_format_sheet`; добавлен конфиг `excel.consistency_sheet` (`freeze_panes`, `auto_filter_header`). |

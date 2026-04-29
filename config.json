@@ -215,6 +215,10 @@
       "freeze_panes": "B2",
       "auto_filter_header": true
     },
+    "consistency_sheet": {
+      "freeze_panes": "A2",
+      "auto_filter_header": true
+    },
     "diff_report_sheet": {
       "enabled": true,
       "name": "DIFF_REPORT",

@@ -224,6 +224,7 @@
 - `entities` — для каждого листа также задается `excel_sheet` (`freeze_panes`, `auto_filter_header`);
 - `excel` — параметры имени выходного файла (`output_name_prefix`, `output_timestamp_format`);
   - `summary_sheet` — закрепление и автофильтр для `SUMMARY`;
+  - `consistency_sheet` — закрепление и автофильтр для `CONSISTENCY`;
   - `diff_report_sheet` — включение листа `DIFF_REPORT`, имя листа, закрепление, длины контекста для сниппетов;
   - `formatting_defaults` — автоподбор ширины, лимит, перенос, выравнивание и цвета подсветки;
   - `formatting_defaults.borders` — параметры рамок и разделителей;
@@ -251,6 +252,7 @@
 - `append_consistency_sheet(workbook, cc, violations, stands)` — добавляет лист сводки в книгу Excel:
   - формат листа `CONSISTENCY`: `ТИП ПРОВЕРКИ`, `Описание`, `таблица источник`, `поле источник`, `таблица где проверяем`, `поле для проверки`, `параметр сравнения`, `комментарий`, `check_id`, `rule_type`, `scope`, `stand`, `total_rows`, `violations`, `sample`;
   - `sample` включает контекст места ошибки: стенд, строка, business_key и сообщение.
+  - к листу `CONSISTENCY` применяется то же общее форматирование, что и к другим листам (`_format_sheet`): границы, выравнивание, перенос и автоподбор ширины колонок с ограничением `excel.formatting_defaults.max_column_width` (по умолчанию `150`).
 
 ## Формат логирования
 
@@ -293,6 +295,7 @@ DEBUG-строка:
 - **[сделано]** Проверки консистентности: раздел `consistency_checks` в `config.json`, модуль `consistency_checks.py`, лист **`CONSISTENCY`**, колонки на листах сущностей, интеграция в пайплайн; включение по умолчанию при непустой секции без ключа `enabled` (`is_consistency_checks_enabled`); строка-итог на `CONSISTENCY` при нуле нарушений; правило **`uniq_group_key`** для GROUP (`scope: both`); выравнивание `business_key` в нарушениях unique с `ParsedRow`.
 - **[сделано]** SPOD-совместимость правил консистентности: нормализация схемы правил (`sheet_*`, `column_*`, `json_key`, `format`) и расширение типов проверок.
 - **[сделано]** Новый формат листа `CONSISTENCY`: свод по правилам в разрезе стендов (`IFT/PROM/PSI` + `NO_STAND`) с колонкой `sample` и деталями места ошибки.
+- **[сделано]** Для листа `CONSISTENCY` включено общее форматирование Excel (границы, перенос, автоширина с лимитом `150`) и конфиг `excel.consistency_sheet`.
 - **[сделано]** Консольная таблица после консистентности: подсчёт нарушений по `rule_id`/стендам.
 - **[сделано]** Входные CSV в `IN/SPOD/IFT` и `IN/SPOD/PSI` переименованы с `(PROM)` на `(IFT)` / `(PSI)`; `config.json` синхронизирован с новыми именами файлов.
 - **[сделано]** Лист Excel `DIFF_REPORT` и настройка `excel.diff_report_sheet` в `config.json`.

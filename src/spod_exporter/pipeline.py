@@ -970,7 +970,28 @@ class SpodPipeline:
 
         cc = self.config.get("consistency_checks") or {}
         if is_consistency_checks_enabled(cc):
-            append_consistency_sheet(workbook, cc, self._consistency_violations, list(self.stands))
+            cons_sheet = append_consistency_sheet(
+                workbook,
+                cc,
+                self._consistency_violations,
+                list(self.stands),
+            )
+            cons_cfg = self.config["excel"].get(
+                "consistency_sheet",
+                {"freeze_panes": "A2", "auto_filter_header": True},
+            )
+            headers = [
+                str(cons_sheet.cell(row=1, column=i).value or "")
+                for i in range(1, cons_sheet.max_column + 1)
+            ]
+            self._apply_sheet_layout(cons_sheet, cons_cfg, len(headers))
+            self._format_sheet(
+                cons_sheet,
+                base_headers=headers,
+                sheet_config=cons_cfg,
+                is_entity_sheet=False,
+                entity_name=None,
+            )
 
         workbook.save(excel_path)
         self.logger.info("Excel сформирован: %s", excel_path)
