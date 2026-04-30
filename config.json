@@ -1161,7 +1161,8 @@
     "reference_row_stand": "PROM"
   },
   "logging": {
-    "topic": "spod_export"
+    "topic": "spod_export",
+    "file_type": "INFO"
   },
   "runtime": {
     "fail_fast": true,

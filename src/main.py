@@ -55,12 +55,21 @@ def main() -> None:
         build_dated_output_dir(Path(config["paths"]["output_excel_dir"]))
     )
 
-    logger, info_path, debug_path = setup_logging(log_dir, config["logging"]["topic"])
+    logger, log_file_path, log_db_path = setup_logging(
+        log_dir,
+        config["logging"]["topic"],
+        config["logging"].get("file_type", "INFO"),
+    )
     logger.info("Старт обработки. config=%s", args.config)
     logger.debug(
-        "Инициализировано логирование INFO=%s DEBUG=%s",
-        info_path,
-        debug_path,
+        "Инициализировано логирование file_type=%s path=%s",
+        config["logging"].get("file_type", "INFO"),
+        log_file_path,
+        extra={"class_name": "Main", "func_name": "main"},
+    )
+    logger.debug(
+        "Инициализирована SQLite-база логов path=%s",
+        log_db_path,
         extra={"class_name": "Main", "func_name": "main"},
     )
 

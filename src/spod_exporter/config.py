@@ -46,5 +46,10 @@ def load_config(config_path: Path) -> dict[str, Any]:
     config.setdefault("excel", {}).setdefault("diff_report_sheet", {}).setdefault(
         "enabled", True
     )
+    logging_cfg = config.setdefault("logging", {})
+    log_file_type = str(logging_cfg.get("file_type", "INFO")).strip().upper()
+    if log_file_type not in {"INFO", "DEBUG"}:
+        raise ValueError("logging.file_type должен быть 'INFO' или 'DEBUG'")
+    logging_cfg["file_type"] = log_file_type
     return config
 

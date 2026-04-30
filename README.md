@@ -81,9 +81,17 @@
      - `business_key` по правилам сущности из `config.json`;
      - `row_hash` по каноническому JSON строки.
 
-3. **Дедупликация файлов в SQLite**
+3. **Дедупликация файлов и история актуальности в SQLite**
    - Таблица `ingested_files` имеет уникальный индекс на `file_hash_sha256`.
-   - Если hash уже встречался, файл отмечается как `SKIPPED_DUPLICATE` и повторно в БД не пишется.
+   - Данные строк (`raw_rows`) сохраняются только для файлов, чей `file_hash_sha256` отсутствует в БД.
+   - При повторной встрече hash новая запись не создается: обновляется существующая запись hash и метки времени.
+   - Для одного источника (`stand` + `entity_type` + `file_name`) ведется флаг актуальности:
+     - новая версия (другой hash) получает `is_actual=1`;
+     - предыдущая актуальная версия помечается как `is_actual=0` и `status=HISTORICAL`.
+   - В `ingested_files` ведется история:
+     - `first_seen_at` — когда hash появился впервые,
+     - `last_seen_at` — когда hash видели в последний раз,
+     - `last_status_changed_at` — когда последний раз менялась актуальность/статус.
 
 4. **Объединение дублей по ключу**
    - Группировка выполняется по `business_key`.
@@ -157,9 +165,9 @@
     - `required_paths` — обязательные пути.
 
 ### `src/spod_exporter/logging_setup.py`
-- `setup_logging(log_dir: Path, topic: str) -> tuple[logging.Logger, Path, Path]`
-  - Назначение: настройка INFO/DEBUG логов с шаблоном имен.
-  - Возвращает пути к логам.
+- `setup_logging(log_dir: Path, topic: str, log_file_type: str) -> tuple[logging.Logger, Path, Path]`
+  - Назначение: настройка одного файлового лога (`INFO` или `DEBUG`) по конфигу и параллельного SQLite-лога.
+  - Возвращает путь активного log-файла и путь к SQLite-базе логов.
 - `debug_extra(class_name: str, func_name: str) -> dict[str, str]`
   - Назначение: формирование служебных полей для DEBUG-формата.
 
@@ -242,7 +250,9 @@
   - при выборе дублей используется фиксированный приоритет стендов `PROM -> PSI -> IFT`; внутри стенда берется первая строка по `row_num`;
   - `reference_row_stand` сохраняется в конфиге для совместимости с существующими проверками/настройками;
   - `source_stands`/`same_row_stands` — стенды с полностью совпавшей выбранной строкой; `same_key_diff_stands` — стенды с тем же ключом и другими значениями.
-- `logging` — тема логирования;
+- `logging` — параметры логирования;
+  - `topic` — часть имени лог-файла;
+  - `file_type` — тип единственного файлового лога: `INFO` или `DEBUG`.
 - `runtime` — режим выполнения: `dry_run`, `parallel_workers` (`"auto"` или число), при необходимости `fail_fast`, `max_errors`.
 - **`consistency_checks`** (по образцу [SPOD_PARCE_LOAD](https://github.com/OrionFLASH/SPOD_PARCE_LOAD)) — построчные и сводные проверки после merge:
   - `enabled` — включить этап (`false` — выключить); **если ключа нет, а секция `consistency_checks` непустая, проверки считаются включёнными** (чтобы не отключались молча при забытых `rules`); `fail_fast` — прервать запуск при первой ошибке с `severity=error`;
@@ -266,8 +276,13 @@
 
 ## Формат логирования
 
-- INFO-файл: `INFO_<topic>_YYYYMMDD_HH.log`
-- DEBUG-файл: `DEBUG_<topic>_YYYYMMDD_HH.log`
+- Файловый лог создается **один** (тип задается в `logging.file_type`):
+  - `INFO_<topic>_YYYYMMDD_HH.log` **или**
+  - `DEBUG_<topic>_YYYYMMDD_HH.log`
+- Дополнительно создается SQLite-лог:
+  - `log/YYYY/MM-DD/DB/program_logs.sqlite`
+  - таблица `program_logs` хранит раздельные колонки для фильтрации (`created_at`, `level_name`, `class_name`, `class_func_name`, `python_module`, `python_func_name`, `source_file`, `source_line_no`, `message` и др.).
+- При ошибке записи в SQLite файловый лог продолжает писаться.
 
 DEBUG-строка:
 
@@ -312,6 +327,8 @@ DEBUG-строка:
 - **[сделано]** Детализация дублей перенесена в `DIFF_REPORT` (включая колонки, позиции и сниппеты отличий), а на листах сущностей добавлены `same_row_stands` и `same_key_diff_stands`.
 - **[сделано]** Добавлен лист `CONS_REPORT` с агрегированными нарушениями консистентности.
 - **[сделано]** Добавлены управляемые флаги CSV-экспорта для отчетных листов: `excel.diff_report_sheet.export_csv` и `excel.cons_report_sheet.export_csv` (по умолчанию выключены).
+- **[сделано]** Логирование переведено в режим одного файлового лога (`logging.file_type`) и добавлен параллельный SQLite-лог в `log/YYYY/MM-DD/DB/program_logs.sqlite`.
+- **[сделано]** Дедуп ingest-данных: запись `raw_rows` только для новых hash и история актуальности в `ingested_files` (`is_actual`, `first_seen_at`, `last_seen_at`, `last_status_changed_at`).
 - **[сделано]** Сохранение логов и Excel в подкаталоги по дате: `YYYY/MM-DD`.
 - **[сделано]** Параллельная обработка файлов/сущностей с авто-числом потоков или явным `--parallel-workers`.
 - **[сделано]** Режим `dry-run` в `runtime` и через CLI `--dry-run`.

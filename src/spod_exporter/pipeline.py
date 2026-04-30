@@ -154,10 +154,15 @@ class SpodPipeline:
                 file_hash_sha256 TEXT NOT NULL,
                 file_size INTEGER NOT NULL,
                 loaded_at TEXT NOT NULL,
-                status TEXT NOT NULL
+                status TEXT NOT NULL,
+                first_seen_at TEXT,
+                last_seen_at TEXT,
+                last_status_changed_at TEXT,
+                is_actual INTEGER NOT NULL DEFAULT 0
             )
             """
         )
+        self._ensure_ingested_files_schema(conn)
         cursor.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_ingested_files_hash ON ingested_files(file_hash_sha256)"
         )
@@ -197,6 +202,22 @@ class SpodPipeline:
             """,
             (self.run_id, datetime.now().isoformat(), "RUNNING"),
         )
+
+    def _ensure_ingested_files_schema(self, conn: sqlite3.Connection) -> None:
+        """Добавляет колонки истории/актуальности в существующую таблицу при миграции."""
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(ingested_files)")
+        existing_columns = {str(row[1]) for row in cursor.fetchall()}
+        migrations: list[tuple[str, str]] = [
+            ("first_seen_at", "TEXT"),
+            ("last_seen_at", "TEXT"),
+            ("last_status_changed_at", "TEXT"),
+            ("is_actual", "INTEGER NOT NULL DEFAULT 0"),
+        ]
+        for column_name, column_type in migrations:
+            if column_name in existing_columns:
+                continue
+            cursor.execute(f"ALTER TABLE ingested_files ADD COLUMN {column_name} {column_type}")
 
     def _save_run(
         self, conn: sqlite3.Connection, status: str, excel_path: Path | None
@@ -323,29 +344,14 @@ class SpodPipeline:
         for descriptor in files:
             is_new_hash = self._is_new_file_hash(cursor, descriptor.file_hash)
             file_is_new_hash[descriptor.file_hash] = is_new_hash
-            status = "NEW" if is_new_hash else "SKIPPED_DUPLICATE"
             if is_new_hash:
                 stats["db_new_files"] += 1
             else:
                 stats["db_skipped_files"] += 1
-            cursor.execute(
-                """
-                INSERT OR IGNORE INTO ingested_files(
-                    run_id, stand, entity_type, file_path, file_name,
-                    file_hash_sha256, file_size, loaded_at, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    self.run_id,
-                    descriptor.stand,
-                    descriptor.entity,
-                    str(descriptor.file_path),
-                    descriptor.file_name,
-                    descriptor.file_hash,
-                    descriptor.file_size,
-                    datetime.now().isoformat(),
-                    status,
-                ),
+            self._upsert_ingested_file(
+                cursor=cursor,
+                descriptor=descriptor,
+                file_hash_is_new=is_new_hash,
             )
 
         with ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
@@ -357,7 +363,7 @@ class SpodPipeline:
                 stats["processed_rows"] += len(parsed_rows)
                 stats["rows_by_entity"][descriptor.entity] += len(parsed_rows)
 
-                if not self.dry_run:
+                if not self.dry_run and file_is_new_hash.get(descriptor.file_hash, False):
                     raw_rows_payload = [
                         (
                             self.run_id,
@@ -512,6 +518,106 @@ class SpodPipeline:
             "SELECT 1 FROM ingested_files WHERE file_hash_sha256 = ? LIMIT 1", (file_hash,)
         )
         return cursor.fetchone() is None
+
+    def _upsert_ingested_file(
+        self,
+        cursor: sqlite3.Cursor,
+        descriptor: FileDescriptor,
+        file_hash_is_new: bool,
+    ) -> None:
+        """Обновляет историю ingest по hash и отмечает актуальную запись источника."""
+        now = datetime.now().isoformat()
+        cursor.execute(
+            """
+            UPDATE ingested_files
+            SET is_actual = 0,
+                status = 'HISTORICAL',
+                last_status_changed_at = ?
+            WHERE stand = ?
+              AND entity_type = ?
+              AND file_name = ?
+              AND is_actual = 1
+              AND file_hash_sha256 <> ?
+            """,
+            (
+                now,
+                descriptor.stand,
+                descriptor.entity,
+                descriptor.file_name,
+                descriptor.file_hash,
+            ),
+        )
+
+        cursor.execute(
+            """
+            SELECT id, is_actual
+            FROM ingested_files
+            WHERE file_hash_sha256 = ?
+            LIMIT 1
+            """,
+            (descriptor.file_hash,),
+        )
+        existing = cursor.fetchone()
+        if existing is None:
+            if not file_hash_is_new:
+                return
+            cursor.execute(
+                """
+                INSERT INTO ingested_files(
+                    run_id, stand, entity_type, file_path, file_name,
+                    file_hash_sha256, file_size, loaded_at, status,
+                    first_seen_at, last_seen_at, last_status_changed_at, is_actual
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    self.run_id,
+                    descriptor.stand,
+                    descriptor.entity,
+                    str(descriptor.file_path),
+                    descriptor.file_name,
+                    descriptor.file_hash,
+                    descriptor.file_size,
+                    now,
+                    "ACTUAL",
+                    now,
+                    now,
+                    now,
+                    1,
+                ),
+            )
+            return
+
+        row_id = int(existing[0])
+        was_actual = int(existing[1]) == 1
+        cursor.execute(
+            """
+            UPDATE ingested_files
+            SET run_id = ?,
+                stand = ?,
+                entity_type = ?,
+                file_path = ?,
+                file_name = ?,
+                file_size = ?,
+                loaded_at = ?,
+                status = 'ACTUAL',
+                last_seen_at = ?,
+                last_status_changed_at = CASE WHEN is_actual = 1 THEN last_status_changed_at ELSE ? END,
+                is_actual = 1
+            WHERE id = ?
+            """,
+            (
+                self.run_id,
+                descriptor.stand,
+                descriptor.entity,
+                str(descriptor.file_path),
+                descriptor.file_name,
+                descriptor.file_size,
+                now,
+                now,
+                now if not was_actual else now,
+                row_id,
+            ),
+        )
 
     def _normalize_row(self, row: dict[str, str | None]) -> dict[str, str]:
         """Канонизирует CSV-строку для корректного сравнения между стендами."""
