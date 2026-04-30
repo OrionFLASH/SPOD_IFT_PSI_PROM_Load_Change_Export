@@ -66,8 +66,8 @@ class TestSpodPipeline(unittest.TestCase):
         key = pipeline._build_business_key("CONTEST", row)  # pylint: disable=protected-access
         self.assertTrue(key.startswith("HASH:"))
 
-    def test_merge_default_splits_same_row_hash_different_raw(self) -> None:
-        """Одинаковый row_hash при разном сыром содержимом даёт две строки; эталон значений — PROM."""
+    def test_merge_default_selects_row_by_stand_priority(self) -> None:
+        """По ключу выбирается одна строка по приоритету стенда: PROM -> PSI -> IFT."""
         pipeline = _build_pipeline()
         business_key = "01|GROUPING|*"
         forced_hash = "same_hash_value"
@@ -102,13 +102,15 @@ class TestSpodPipeline(unittest.TestCase):
                 row_hash=forced_hash,
             ),
         ]
-        merged, _ = pipeline._merge_entity_default("GROUP", rows)  # pylint: disable=protected-access
-        self.assertEqual(len(merged), 2)
-        by_sources = {m.source_stands: m for m in merged}
-        self.assertIn("PROM", by_sources)
-        self.assertIn("IFT-PSI", by_sources)
-        self.assertEqual(by_sources["PROM"].merged_data["ADD_CALC_CRITERION"], "3")
-        self.assertEqual(by_sources["IFT-PSI"].merged_data["ADD_CALC_CRITERION"], "2")
+        merged, counts, diff_rows = pipeline._merge_entity_default(  # pylint: disable=protected-access
+            "GROUP", rows
+        )
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].merged_data["ADD_CALC_CRITERION"], "3")
+        self.assertEqual(merged[0].merged_data["same_row_stands"], "PROM")
+        self.assertEqual(merged[0].merged_data["same_key_diff_stands"], "PSI-IFT")
+        self.assertEqual(counts[business_key], 3)
+        self.assertEqual(len(diff_rows), 3)
 
     def test_source_stands_only_where_display_payload_matches(self) -> None:
         """source_stands: только стенды, где все поля совпадают с эталонной выводимой строкой (тот же business_key)."""
@@ -136,11 +138,8 @@ class TestSpodPipeline(unittest.TestCase):
         stands = pipeline._collect_stands_matching_display_payload(bk, display, rows)  # pylint: disable=protected-access
         self.assertEqual(stands, ["PROM"])
 
-    def test_rows_with_missing_optional_column_are_collapsed(self) -> None:
-        """
-        Если колонка присутствует только в одной строке, но общие поля равны,
-        строки считаются идентичными и схлопываются в одну merged-строку.
-        """
+    def test_rows_with_missing_optional_column_follow_priority(self) -> None:
+        """Если выбран PROM, доп.колонка только в IFT не переносится в лист сущности."""
         pipeline = _build_pipeline()
         business_key = "C2"
         rows = [
@@ -161,8 +160,9 @@ class TestSpodPipeline(unittest.TestCase):
                 row_hash="h2",
             ),
         ]
-        merged, _ = pipeline._merge_entity_default("CONTEST", rows)  # pylint: disable=protected-access
+        merged, _, _ = pipeline._merge_entity_default("CONTEST", rows)  # pylint: disable=protected-access
         self.assertEqual(len(merged), 1)
-        self.assertEqual(merged[0].source_stands, "PROM-IFT")
-        self.assertEqual(merged[0].merged_data.get("EXTRA_RULE"), "X")
+        self.assertEqual(merged[0].source_stands, "PROM")
+        self.assertEqual(merged[0].merged_data.get("same_key_diff_stands"), "IFT")
+        self.assertIsNone(merged[0].merged_data.get("EXTRA_RULE"))
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import hashlib
 import json
+import re
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -33,13 +34,16 @@ class SpodPipeline:
 
         self.paths: dict[str, Path] = {
             "input_root": Path(config["paths"]["input_root"]),
-            "output_excel_dir": Path(config["paths"]["output_excel_dir"]),
+            "output_excel_dir": self._ensure_dated_output_dir(
+                Path(config["paths"]["output_excel_dir"])
+            ),
             "output_db_dir": Path(config["paths"]["output_db_dir"]),
         }
         self.entities: dict[str, dict[str, Any]] = config["entities"]
         self.stands: list[str] = config["stands"]
         self.entity_field_orders: dict[str, dict[str, list[str]]] = defaultdict(dict)
         self.entity_extra_fields: dict[str, set[str]] = defaultdict(set)
+        self._diff_report_rows: list[dict[str, str]] = []
         self.runtime_cfg: dict[str, Any] = config.get("runtime", {})
         self.dry_run: bool = bool(self.runtime_cfg.get("dry_run", False))
         self.parallel_workers: int = self._resolve_parallel_workers()
@@ -50,6 +54,19 @@ class SpodPipeline:
 
         db_name: str = config["sqlite"]["db_name"]
         self.db_path: Path = self.paths["output_db_dir"] / db_name
+
+    def _ensure_dated_output_dir(self, base_dir: Path) -> Path:
+        """Возвращает директорию формата YYYY/MM-DD, избегая двойной вложенности."""
+        if len(base_dir.parts) >= 2:
+            year_part = base_dir.parts[-2]
+            month_day_part = base_dir.parts[-1]
+            if re.fullmatch(r"\d{4}", year_part) and re.fullmatch(r"\d{2}-\d{2}", month_day_part):
+                return base_dir
+
+        now = datetime.now()
+        year_dir = now.strftime("%Y")
+        month_day_dir = now.strftime("%m-%d")
+        return base_dir / year_dir / month_day_dir
 
     def _resolve_parallel_workers(self) -> int:
         """Определяет число потоков: авто по ядрам или из runtime.parallel_workers."""
@@ -569,6 +586,7 @@ class SpodPipeline:
     ) -> None:
         """Запускает проверки консистентности из config.json; дополняет merged_data и список нарушений."""
         self._consistency_violations = []
+        self._diff_report_rows = []
         cc = self.config.get("consistency_checks") or {}
         if not is_consistency_checks_enabled(cc):
             return
@@ -647,23 +665,25 @@ class SpodPipeline:
     def _merge_entity_bundle(
         self, entity: str, rows: list[ParsedRow]
     ) -> tuple[str, list[MergedRow], dict[str, int], set[str]]:
-        """Мержит одну сущность (изолированный bundle для параллельного вызова)."""
+        """Мержит одну сущность с приоритетом стенда: PROM -> PSI -> IFT."""
         optional_cfg = self.entities[entity].get("optional_fields", {})
+        extra_fields = set()
         if optional_cfg.get("enabled", False):
-            merged_rows, by_business_key_counts, extra_fields = self._merge_entity_with_optional_fields(
-                entity=entity,
-                rows=rows,
-                reference_stand=optional_cfg.get("reference_stand", "PROM"),
-            )
-        else:
-            merged_rows, by_business_key_counts = self._merge_entity_default(entity, rows)
-            extra_fields = set()
+            field_orders = self.entity_field_orders.get(entity, {})
+            reference_stand = optional_cfg.get("reference_stand", "PROM")
+            reference_fields = set(field_orders.get(reference_stand, []))
+            all_fields: set[str] = set()
+            for stand_fields in field_orders.values():
+                all_fields.update(stand_fields)
+            extra_fields = all_fields - reference_fields
+
+        merged_rows, by_business_key_counts, diff_rows = self._merge_entity_default(entity, rows)
+        self._diff_report_rows.extend(diff_rows)
 
         for item in merged_rows:
             has_diff_values = by_business_key_counts[item.business_key] > 1
             item.merged_data["same_key_diff_values_flag"] = "1" if has_diff_values else "0"
             item.merged_data["same_key_diff_values_note"] = "YES" if has_diff_values else "NO"
-        self._add_diff_diagnostics(merged_rows)
         merged_rows.sort(key=lambda item: (item.business_key, item.row_hash))
         return entity, merged_rows, by_business_key_counts, extra_fields
 
@@ -701,7 +721,7 @@ class SpodPipeline:
 
     def _merge_entity_default(
         self, entity: str, rows: list[ParsedRow]
-    ) -> tuple[list[MergedRow], dict[str, int]]:
+    ) -> tuple[list[MergedRow], dict[str, int], list[dict[str, str]]]:
         by_key_rows: dict[str, list[ParsedRow]] = defaultdict(list)
         for row in rows:
             by_key_rows[row.business_key].append(row)
@@ -734,72 +754,152 @@ class SpodPipeline:
             return preferred_rows[0]
         return min(rows, key=lambda row: rank.get(row.stand, 999))
 
-    def _merge_entity_with_optional_fields(
-        self, entity: str, rows: list[ParsedRow], reference_stand: str
-    ) -> tuple[list[MergedRow], dict[str, int], set[str]]:
-        field_orders = self.entity_field_orders.get(entity, {})
-        reference_fields = set(field_orders.get(reference_stand, []))
-        all_fields: set[str] = set()
-        for stand_fields in field_orders.values():
-            all_fields.update(stand_fields)
-        extra_fields = all_fields - reference_fields
-        by_key_rows: dict[str, list[ParsedRow]] = defaultdict(list)
-        for row in rows:
-            by_key_rows[row.business_key].append(row)
-
-        merged_rows, by_business_key_counts = self._merge_by_business_key_clusters(
-            entity=entity, by_key_rows=by_key_rows
-        )
-        return merged_rows, by_business_key_counts, set(extra_fields)
-
     def _merge_by_business_key_clusters(
         self, entity: str, by_key_rows: dict[str, list[ParsedRow]]
-    ) -> tuple[list[MergedRow], dict[str, int]]:
-        """Схлопывает только идентичные строки по ключу; разные оставляет отдельными."""
+    ) -> tuple[list[MergedRow], dict[str, int], list[dict[str, str]]]:
+        """Выбирает одну строку на ключ по приоритету стенда и собирает детализацию в DIFF_REPORT."""
         merged_rows: list[MergedRow] = []
         by_business_key_counts: dict[str, int] = defaultdict(int)
-        rank = self._stand_sort_rank()
+        diff_report_rows: list[dict[str, str]] = []
+        rank = self._stand_sort_rank_for_duplicates()
 
         for business_key, key_rows in by_key_rows.items():
-            sorted_rows = sorted(key_rows, key=lambda item: rank.get(item.stand, 999))
-            clusters: list[list[ParsedRow]] = []
-            for candidate in sorted_rows:
-                placed = False
-                for cluster in clusters:
-                    if self._row_compatible_with_cluster(candidate=candidate, cluster=cluster):
-                        cluster.append(candidate)
-                        placed = True
-                        break
-                if not placed:
-                    clusters.append([candidate])
+            by_business_key_counts[business_key] = len(key_rows)
+            selected_row = self._select_priority_row_for_key(key_rows)
+            same_stands, diff_stands = self._split_stands_by_selected_row(selected_row, key_rows)
+            merged_payload = dict(selected_row.data)
+            effective_row_hash = self._hash_json(self._normalize_row(merged_payload))
+            diff_group_key = f"{entity}:{business_key}:1"
 
-            for cluster_rows in clusters:
-                by_business_key_counts[business_key] += 1
-                reference_row = self._pick_reference_parsed_row(cluster_rows)
-                merged_payload = self._build_cluster_payload(reference_row, cluster_rows)
-                effective_row_hash = self._hash_json(self._normalize_row(merged_payload))
-                stands = sorted({row.stand for row in cluster_rows}, key=lambda stand: rank.get(stand, 99))
-                source_stands = "-".join(stands)
-                source_count = len(stands)
-                diff_group_key = f"{entity}:{business_key}:{by_business_key_counts[business_key]}"
-
-                merged_payload["source_stands"] = source_stands
-                merged_payload["source_count"] = str(source_count)
-                merged_payload["is_equal_all"] = "1" if source_count == len(self.stands) else "0"
-                merged_payload["diff_group_key"] = diff_group_key
-                merged_rows.append(
-                    MergedRow(
-                        entity=entity,
-                        business_key=business_key,
-                        row_hash=effective_row_hash,
-                        source_stands=source_stands,
-                        source_count=source_count,
-                        is_equal_all=source_count == len(self.stands),
-                        diff_group_key=diff_group_key,
-                        merged_data=merged_payload,
-                    )
+            source_stands = "-".join(same_stands)
+            merged_payload["source_stands"] = source_stands
+            merged_payload["source_count"] = str(len(same_stands))
+            merged_payload["is_equal_all"] = "1" if len(same_stands) == len(self.stands) else "0"
+            merged_payload["diff_group_key"] = diff_group_key
+            merged_payload["same_row_stands"] = "-".join(same_stands)
+            merged_payload["same_key_diff_stands"] = "-".join(diff_stands)
+            merged_rows.append(
+                MergedRow(
+                    entity=entity,
+                    business_key=business_key,
+                    row_hash=effective_row_hash,
+                    source_stands=source_stands,
+                    source_count=len(same_stands),
+                    is_equal_all=len(same_stands) == len(self.stands),
+                    diff_group_key=diff_group_key,
+                    merged_data=merged_payload,
                 )
-        return merged_rows, by_business_key_counts
+            )
+
+            diff_report_rows.extend(
+                self._build_diff_report_rows_for_key(entity, business_key, selected_row, key_rows)
+            )
+        return merged_rows, by_business_key_counts, diff_report_rows
+
+    def _stand_sort_rank_for_duplicates(self) -> dict[str, int]:
+        """Приоритет стендов для выбора дублей: PROM -> PSI -> IFT."""
+        preferred_order: list[str] = ["PROM", "PSI", "IFT"]
+        for stand in self.stands:
+            if stand not in preferred_order:
+                preferred_order.append(stand)
+        return {stand: idx for idx, stand in enumerate(preferred_order)}
+
+    def _select_priority_row_for_key(self, key_rows: list[ParsedRow]) -> ParsedRow:
+        """Выбирает первую строку в стенде с максимальным приоритетом."""
+        rank = self._stand_sort_rank_for_duplicates()
+        return min(
+            key_rows,
+            key=lambda row: (
+                rank.get(row.stand, 999),
+                row.row_num,
+            ),
+        )
+
+    def _split_stands_by_selected_row(
+        self, selected_row: ParsedRow, key_rows: list[ParsedRow]
+    ) -> tuple[list[str], list[str]]:
+        """Возвращает стенды с идентичной строкой и стенды с тем же ключом, но иными данными."""
+        rank = self._stand_sort_rank_for_duplicates()
+        same: set[str] = set()
+        diff: set[str] = set()
+        for row in key_rows:
+            if row.data == selected_row.data:
+                same.add(row.stand)
+            else:
+                diff.add(row.stand)
+        return (
+            sorted(same, key=lambda stand: rank.get(stand, 999)),
+            sorted(diff, key=lambda stand: rank.get(stand, 999)),
+        )
+
+    def _build_diff_report_rows_for_key(
+        self,
+        entity: str,
+        business_key: str,
+        selected_row: ParsedRow,
+        key_rows: list[ParsedRow],
+    ) -> list[dict[str, str]]:
+        """Формирует детализацию дублей по ключу для отдельного листа DIFF_REPORT."""
+        diagnostics_cfg = self.config.get("excel", {}).get("diff_report_sheet", {})
+        left_context = int(diagnostics_cfg.get("left_context_chars", 10))
+        right_context = int(diagnostics_cfg.get("right_context_chars", 20))
+        rows: list[dict[str, str]] = []
+        for row in key_rows:
+            diff_columns = self._find_row_diff_columns(selected_row.data, row.data)
+            diff_positions, diff_snippets = self._build_row_diff_details(
+                left=selected_row.data,
+                right=row.data,
+                diff_columns=diff_columns,
+                left_context=left_context,
+                right_context=right_context,
+            )
+            rows.append(
+                {
+                    "entity": entity,
+                    "business_key": business_key,
+                    "selected_stand": selected_row.stand,
+                    "selected_row_num": str(selected_row.row_num),
+                    "candidate_stand": row.stand,
+                    "candidate_row_num": str(row.row_num),
+                    "relation": "SAME_ROW" if not diff_columns else "SAME_KEY_DIFFERENT_ROW",
+                    "diff_columns": ",".join(diff_columns),
+                    "diff_positions": diff_positions,
+                    "diff_snippets": diff_snippets,
+                }
+            )
+        return rows
+
+    def _find_row_diff_columns(self, left: dict[str, str], right: dict[str, str]) -> list[str]:
+        """Возвращает колонки, значения которых отличаются для пары строк."""
+        columns = sorted(set(left.keys()) | set(right.keys()))
+        diff_columns: list[str] = []
+        for col in columns:
+            if str(left.get(col, "")) != str(right.get(col, "")):
+                diff_columns.append(col)
+        return diff_columns
+
+    def _build_row_diff_details(
+        self,
+        left: dict[str, str],
+        right: dict[str, str],
+        diff_columns: list[str],
+        left_context: int,
+        right_context: int,
+    ) -> tuple[str, str]:
+        """Формирует позиции и фрагменты отличий для пары строк."""
+        if not diff_columns:
+            return "", ""
+        positions: list[str] = []
+        snippets: list[str] = []
+        for col in diff_columns:
+            left_val = str(left.get(col, ""))
+            right_val = str(right.get(col, ""))
+            pos = self._first_diff_pos(left_val, right_val)
+            positions.append(f"{col}:{pos}")
+            left_part = left_val[max(0, pos - left_context) : pos + right_context]
+            right_part = right_val[max(0, pos - left_context) : pos + right_context]
+            snippets.append(f"{col} => [{left_part}] != [{right_part}]")
+        return " | ".join(positions), " | ".join(snippets)
 
     def _build_cluster_payload(
         self, reference_row: ParsedRow, cluster_rows: list[ParsedRow]
@@ -992,6 +1092,7 @@ class SpodPipeline:
                 is_entity_sheet=False,
                 entity_name=None,
             )
+            self._append_cons_report_sheet(workbook)
 
         workbook.save(excel_path)
         self.logger.info("Excel сформирован: %s", excel_path)
@@ -1010,26 +1111,70 @@ class SpodPipeline:
         headers = [
             "entity",
             "business_key",
-            "source_stands",
+            "selected_stand",
+            "selected_row_num",
+            "candidate_stand",
+            "candidate_row_num",
+            "relation",
             "diff_columns",
             "diff_positions",
             "diff_snippets",
         ]
         sheet.append(headers)
-        for entity, rows in merged.items():
-            for item in rows:
-                if item.merged_data.get("same_key_diff_values_flag", "0") != "1":
-                    continue
-                sheet.append(
-                    [
-                        entity,
-                        item.business_key,
-                        item.source_stands,
-                        item.merged_data.get("diff_columns", ""),
-                        item.merged_data.get("diff_positions", ""),
-                        item.merged_data.get("diff_snippets", ""),
-                    ]
-                )
+        for item in self._diff_report_rows:
+            sheet.append(
+                [
+                    item.get("entity", ""),
+                    item.get("business_key", ""),
+                    item.get("selected_stand", ""),
+                    item.get("selected_row_num", ""),
+                    item.get("candidate_stand", ""),
+                    item.get("candidate_row_num", ""),
+                    item.get("relation", ""),
+                    item.get("diff_columns", ""),
+                    item.get("diff_positions", ""),
+                    item.get("diff_snippets", ""),
+                ]
+            )
+        self._apply_sheet_layout(sheet, sheet_cfg, len(headers))
+        self._format_sheet(
+            sheet,
+            base_headers=headers,
+            sheet_config=sheet_cfg,
+            is_entity_sheet=False,
+            entity_name=None,
+        )
+
+    def _append_cons_report_sheet(self, workbook: Workbook) -> None:
+        """Добавляет агрегированный лист по нарушениям консистентности."""
+        sheet = workbook.create_sheet("CONS_REPORT")
+        headers = [
+            "entity",
+            "rule_id",
+            "rule_type",
+            "scope",
+            "stand",
+            "row_num",
+            "business_key",
+            "severity",
+            "message",
+        ]
+        sheet.append(headers)
+        for violation in self._consistency_violations:
+            sheet.append(
+                [
+                    str(violation.entity),
+                    str(violation.rule_id),
+                    str(violation.rule_type),
+                    str(violation.scope),
+                    str(violation.stand or ""),
+                    str(violation.row_num or ""),
+                    str(violation.business_key or ""),
+                    str(violation.severity),
+                    str(violation.message),
+                ]
+            )
+        sheet_cfg = {"freeze_panes": "A2", "auto_filter_header": True}
         self._apply_sheet_layout(sheet, sheet_cfg, len(headers))
         self._format_sheet(
             sheet,
@@ -1042,6 +1187,9 @@ class SpodPipeline:
     def _build_entity_headers(self, entity: str, rows: list[MergedRow]) -> list[str]:
         """Строит порядок колонок: эталон PROM + доп.поля в местах появления."""
         service_fields_order = self.config["excel"]["formatting_defaults"].get("service_fields", [])
+        for mandatory_field in ("same_row_stands", "same_key_diff_stands"):
+            if mandatory_field not in service_fields_order:
+                service_fields_order.append(mandatory_field)
         present_service = [field for field in service_fields_order if any(field in row.merged_data for row in rows)]
 
         field_orders = self.entity_field_orders.get(entity, {})

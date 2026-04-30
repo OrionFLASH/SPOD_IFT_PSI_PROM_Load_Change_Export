@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 from pathlib import Path
 
 from spod_exporter.config import load_config
 from spod_exporter.logging_setup import setup_logging
 from spod_exporter.pipeline import SpodPipeline
+
+
+def build_dated_output_dir(base_dir: Path) -> Path:
+    """Формирует путь вида YYYY/MM-DD внутри базовой директории."""
+    now = datetime.now()
+    year_dir = now.strftime("%Y")
+    month_day_dir = now.strftime("%m-%d")
+    return base_dir / year_dir / month_day_dir
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,9 +50,12 @@ def main() -> None:
     if args.parallel_workers and args.parallel_workers > 0:
         runtime_cfg["parallel_workers"] = args.parallel_workers
 
-    logger, info_path, debug_path = setup_logging(
-        Path(config["paths"]["log_dir"]), config["logging"]["topic"]
+    log_dir = build_dated_output_dir(Path(config["paths"]["log_dir"]))
+    config["paths"]["output_excel_dir"] = str(
+        build_dated_output_dir(Path(config["paths"]["output_excel_dir"]))
     )
+
+    logger, info_path, debug_path = setup_logging(log_dir, config["logging"]["topic"])
     logger.info("Старт обработки. config=%s", args.config)
     logger.debug(
         "Инициализировано логирование INFO=%s DEBUG=%s",
