@@ -115,7 +115,7 @@
 | §3 Правила: CSV, ключи, optional-поля, объединение, SQLite, дедуп, консольная статистика | **[сделано]** |
 | §4 Excel: листы сущностей, SUMMARY, форматирование, рамки, приоритет подсветки | **[сделано]** |
 | §4 Лист DIFF_REPORT | **[сделано]** (через конфиг) |
-| §4 Лист CONSISTENCY, проверки `consistency_checks` | **[сделано]** (через конфиг; см. `README.md`, `Docs/Roadmap_SPOD.md` C-01…C-10) |
+| §4 Лист CONSISTENCY, проверки `consistency_checks` | **[сделано]** (через конфиг; см. `README.md`, `Docs/ROADMAP.md` C-01…C-10) |
 | §4 SQLite: runs, ingested_files, raw_rows, merged_rows | **[сделано]** |
 | §4 Логи INFO/DEBUG | **[сделано]** |
 | §4.1 dry-run, parallel | **[сделано]** |
