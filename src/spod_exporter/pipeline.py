@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import hashlib
 import json
+import csv
 import re
 import sqlite3
 import time
@@ -80,6 +81,7 @@ class SpodPipeline:
         """Запускает полный цикл обработки по ТЗ."""
         stage_timings: dict[str, float] = {}
         run_started = time.perf_counter()
+        self._diff_report_rows = []
         conn = sqlite3.connect(self.db_path)
         try:
             self.logger.info("Проверка входных файлов перед стартом...")
@@ -98,8 +100,9 @@ class SpodPipeline:
             stage_timings["parse_rows"] = time.perf_counter() - stage_start
             self._log_parse_summary(parse_stats)
             stage_start = time.perf_counter()
-            merged, merge_stats = self._merge_rows(parsed)
+            merged, merge_stats, diff_rows = self._merge_rows(parsed)
             stage_timings["merge_rows"] = time.perf_counter() - stage_start
+            self._diff_report_rows = diff_rows
             self._log_merge_summary(merge_stats)
             stage_start = time.perf_counter()
             self._run_consistency_checks(parsed, merged)
@@ -542,9 +545,10 @@ class SpodPipeline:
 
     def _merge_rows(
         self, parsed_rows: dict[str, list[ParsedRow]]
-    ) -> tuple[dict[str, list[MergedRow]], dict[str, Any]]:
+    ) -> tuple[dict[str, list[MergedRow]], dict[str, Any], list[dict[str, str]]]:
         """Объединяет данные по business_key + row_hash и формирует служебные признаки."""
         result: dict[str, list[MergedRow]] = {}
+        diff_report_rows: list[dict[str, str]] = []
         stats: dict[str, Any] = {
             "merged_total": 0,
             "equal_all_total": 0,
@@ -559,9 +563,10 @@ class SpodPipeline:
                 for entity, rows in parsed_rows.items()
             }
             for future in as_completed(futures):
-                entity, merged_rows, by_business_key_counts, extra_fields = future.result()
+                entity, merged_rows, by_business_key_counts, extra_fields, entity_diff_rows = future.result()
                 self.entity_extra_fields[entity] = extra_fields
                 result[entity] = merged_rows
+                diff_report_rows.extend(entity_diff_rows)
                 entity_equal_all = sum(1 for item in merged_rows if item.is_equal_all)
                 entity_diff = len(merged_rows) - entity_equal_all
                 same_key_different = sum(
@@ -577,7 +582,7 @@ class SpodPipeline:
                 stats["equal_all_total"] += entity_equal_all
                 stats["different_total"] += entity_diff
                 stats["same_key_different_values_total"] += same_key_different
-        return result, stats
+        return result, stats, diff_report_rows
 
     def _run_consistency_checks(
         self,
@@ -586,7 +591,6 @@ class SpodPipeline:
     ) -> None:
         """Запускает проверки консистентности из config.json; дополняет merged_data и список нарушений."""
         self._consistency_violations = []
-        self._diff_report_rows = []
         cc = self.config.get("consistency_checks") or {}
         if not is_consistency_checks_enabled(cc):
             return
@@ -664,7 +668,7 @@ class SpodPipeline:
 
     def _merge_entity_bundle(
         self, entity: str, rows: list[ParsedRow]
-    ) -> tuple[str, list[MergedRow], dict[str, int], set[str]]:
+    ) -> tuple[str, list[MergedRow], dict[str, int], set[str], list[dict[str, str]]]:
         """Мержит одну сущность с приоритетом стенда: PROM -> PSI -> IFT."""
         optional_cfg = self.entities[entity].get("optional_fields", {})
         extra_fields = set()
@@ -678,14 +682,13 @@ class SpodPipeline:
             extra_fields = all_fields - reference_fields
 
         merged_rows, by_business_key_counts, diff_rows = self._merge_entity_default(entity, rows)
-        self._diff_report_rows.extend(diff_rows)
 
         for item in merged_rows:
-            has_diff_values = by_business_key_counts[item.business_key] > 1
+            has_diff_values = bool(str(item.merged_data.get("same_key_diff_stands", "")).strip())
             item.merged_data["same_key_diff_values_flag"] = "1" if has_diff_values else "0"
             item.merged_data["same_key_diff_values_note"] = "YES" if has_diff_values else "NO"
         merged_rows.sort(key=lambda item: (item.business_key, item.row_hash))
-        return entity, merged_rows, by_business_key_counts, extra_fields
+        return entity, merged_rows, by_business_key_counts, extra_fields, diff_rows
 
     def _source_row_matches_display_payload(
         self, display: dict[str, str], source: dict[str, str]
@@ -846,6 +849,8 @@ class SpodPipeline:
         rows: list[dict[str, str]] = []
         for row in key_rows:
             diff_columns = self._find_row_diff_columns(selected_row.data, row.data)
+            if not diff_columns:
+                continue
             diff_positions, diff_snippets = self._build_row_diff_details(
                 left=selected_row.data,
                 right=row.data,
@@ -861,7 +866,7 @@ class SpodPipeline:
                     "selected_row_num": str(selected_row.row_num),
                     "candidate_stand": row.stand,
                     "candidate_row_num": str(row.row_num),
-                    "relation": "SAME_ROW" if not diff_columns else "SAME_KEY_DIFFERENT_ROW",
+                    "relation": "SAME_KEY_DIFFERENT_ROW",
                     "diff_columns": ",".join(diff_columns),
                     "diff_positions": diff_positions,
                     "diff_snippets": diff_snippets,
@@ -1017,8 +1022,22 @@ class SpodPipeline:
         timestamp_value = datetime.now().strftime(timestamp_format)
         file_name = f"{output_prefix}_{timestamp_value}.xlsx"
         excel_path = self.paths["output_excel_dir"] / file_name
+        diff_report_csv_path = (
+            self.paths["output_excel_dir"] / f"{output_prefix}_{timestamp_value}_DIFF_REPORT.csv"
+        )
+        cons_report_csv_path = (
+            self.paths["output_excel_dir"] / f"{output_prefix}_{timestamp_value}_CONS_REPORT.csv"
+        )
         if self.dry_run:
             self.logger.info("Dry-run: формирование Excel пропущено, целевой путь=%s", excel_path)
+            self.logger.info(
+                "Dry-run: формирование CSV для DIFF_REPORT пропущено, целевой путь=%s",
+                diff_report_csv_path,
+            )
+            self.logger.info(
+                "Dry-run: формирование CSV для CONS_REPORT пропущено, целевой путь=%s",
+                cons_report_csv_path,
+            )
             return excel_path
 
         workbook = Workbook()
@@ -1095,8 +1114,88 @@ class SpodPipeline:
             self._append_cons_report_sheet(workbook)
 
         workbook.save(excel_path)
+        if self.config["excel"].get("diff_report_sheet", {}).get("export_csv", False):
+            self._export_diff_report_csv(diff_report_csv_path)
+        if self.config["excel"].get("cons_report_sheet", {}).get("export_csv", False):
+            self._export_cons_report_csv(cons_report_csv_path)
         self.logger.info("Excel сформирован: %s", excel_path)
         return excel_path
+
+    def _export_diff_report_csv(self, csv_path: Path) -> None:
+        """Сохраняет лист DIFF_REPORT в отдельный CSV-файл для анализа."""
+        headers = [
+            "entity",
+            "business_key",
+            "selected_stand",
+            "selected_row_num",
+            "candidate_stand",
+            "candidate_row_num",
+            "relation",
+            "diff_columns",
+            "diff_positions",
+            "diff_snippets",
+        ]
+        with csv_path.open("w", encoding="utf-8-sig", newline="") as file:
+            writer = csv.writer(file, delimiter=";")
+            writer.writerow(headers)
+            for item in self._diff_report_rows:
+                writer.writerow(
+                    [
+                        item.get("entity", ""),
+                        item.get("business_key", ""),
+                        item.get("selected_stand", ""),
+                        item.get("selected_row_num", ""),
+                        item.get("candidate_stand", ""),
+                        item.get("candidate_row_num", ""),
+                        item.get("relation", ""),
+                        item.get("diff_columns", ""),
+                        item.get("diff_positions", ""),
+                        item.get("diff_snippets", ""),
+                    ]
+                )
+        self.logger.info("CSV DIFF_REPORT сформирован: %s", csv_path)
+
+    def _export_cons_report_csv(self, csv_path: Path) -> None:
+        """Сохраняет лист CONS_REPORT в отдельный CSV-файл для анализа."""
+        headers = [
+            "entity",
+            "rule_id",
+            "rule_type",
+            "scope",
+            "stand",
+            "row_num",
+            "business_key",
+            "severity",
+            "message",
+            "diff_columns",
+            "diff_positions",
+            "diff_snippets",
+        ]
+        with csv_path.open("w", encoding="utf-8-sig", newline="") as file:
+            writer = csv.writer(file, delimiter=";")
+            writer.writerow(headers)
+            for violation in self._consistency_violations:
+                diff_columns, diff_positions, diff_snippets = self._build_consistency_diff_details(
+                    entity=str(violation.entity),
+                    message=str(violation.message),
+                )
+                writer.writerow(
+                    [
+                        str(violation.entity),
+                        str(violation.rule_id),
+                        str(violation.rule_type),
+                        str(violation.scope),
+                        str(violation.stand or ""),
+                        str(violation.row_num or ""),
+                        str(violation.business_key or ""),
+                        str(violation.severity),
+                        str(violation.message),
+                        diff_columns,
+                        diff_positions,
+                        diff_snippets,
+                    ]
+                )
+        self.logger.info("CSV CONS_REPORT сформирован: %s", csv_path)
 
     def _append_diff_report_sheet(
         self, workbook: Workbook, merged: dict[str, list[MergedRow]]
@@ -1158,9 +1257,16 @@ class SpodPipeline:
             "business_key",
             "severity",
             "message",
+            "diff_columns",
+            "diff_positions",
+            "diff_snippets",
         ]
         sheet.append(headers)
         for violation in self._consistency_violations:
+            diff_columns, diff_positions, diff_snippets = self._build_consistency_diff_details(
+                entity=str(violation.entity),
+                message=str(violation.message),
+            )
             sheet.append(
                 [
                     str(violation.entity),
@@ -1172,6 +1278,9 @@ class SpodPipeline:
                     str(violation.business_key or ""),
                     str(violation.severity),
                     str(violation.message),
+                    diff_columns,
+                    diff_positions,
+                    diff_snippets,
                 ]
             )
         sheet_cfg = {"freeze_panes": "A2", "auto_filter_header": True}
@@ -1183,6 +1292,47 @@ class SpodPipeline:
             is_entity_sheet=False,
             entity_name=None,
         )
+
+    def _build_consistency_diff_details(self, entity: str, message: str) -> tuple[str, str, str]:
+        """Возвращает диагностику по сообщению консистентности в формате DIFF_REPORT."""
+        if not message:
+            return "", "", ""
+        candidate_columns = self._guess_columns_from_message(entity, message)
+        if not candidate_columns:
+            snippet = message[:200]
+            return "MESSAGE", "MESSAGE:0", f"MESSAGE => [{snippet}]"
+
+        positions: list[str] = []
+        snippets: list[str] = []
+        for column in candidate_columns:
+            pos = message.find(column)
+            if pos < 0:
+                continue
+            positions.append(f"{column}:{pos}")
+            left = max(0, pos - 20)
+            right = min(len(message), pos + len(column) + 40)
+            snippets.append(f"{column} => [{message[left:right]}]")
+
+        if not positions:
+            snippet = message[:200]
+            return "MESSAGE", "MESSAGE:0", f"MESSAGE => [{snippet}]"
+
+        return ",".join(candidate_columns), " | ".join(positions), " | ".join(snippets)
+
+    def _guess_columns_from_message(self, entity: str, message: str) -> list[str]:
+        """Пытается извлечь имена колонок из текста нарушения консистентности."""
+        columns: list[str] = []
+        known_headers: list[str] = []
+        for stand_headers in self.entity_field_orders.get(entity, {}).values():
+            known_headers.extend(stand_headers)
+
+        unique_headers = sorted(set(known_headers), key=len, reverse=True)
+        for header in unique_headers:
+            if header and header in message:
+                columns.append(header)
+            if len(columns) >= 5:
+                break
+        return columns
 
     def _build_entity_headers(self, entity: str, rows: list[MergedRow]) -> list[str]:
         """Строит порядок колонок: эталон PROM + доп.поля в местах появления."""

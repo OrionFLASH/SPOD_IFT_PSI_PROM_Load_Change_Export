@@ -110,7 +110,8 @@ class TestSpodPipeline(unittest.TestCase):
         self.assertEqual(merged[0].merged_data["same_row_stands"], "PROM")
         self.assertEqual(merged[0].merged_data["same_key_diff_stands"], "PSI-IFT")
         self.assertEqual(counts[business_key], 3)
-        self.assertEqual(len(diff_rows), 3)
+        self.assertEqual(len(diff_rows), 2)
+        self.assertTrue(all(item["relation"] == "SAME_KEY_DIFFERENT_ROW" for item in diff_rows))
 
     def test_source_stands_only_where_display_payload_matches(self) -> None:
         """source_stands: только стенды, где все поля совпадают с эталонной выводимой строкой (тот же business_key)."""

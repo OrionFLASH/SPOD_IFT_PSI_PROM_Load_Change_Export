@@ -219,8 +219,12 @@
       "freeze_panes": "A2",
       "auto_filter_header": true
     },
+    "cons_report_sheet": {
+      "export_csv": false
+    },
     "diff_report_sheet": {
       "enabled": true,
+      "export_csv": false,
       "name": "DIFF_REPORT",
       "freeze_panes": "A2",
       "auto_filter_header": true,

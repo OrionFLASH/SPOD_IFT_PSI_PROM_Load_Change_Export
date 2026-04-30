@@ -103,6 +103,9 @@
      - по одному листу на каждую сущность (`CONTEST`, `EMPLOYEE`, ...);
     - при `excel.diff_report_sheet.enabled=true` — лист **`DIFF_REPORT`** (детализация дублей по ключам, стендам, колонкам и позициям отличий);
     - при `consistency_checks.enabled=true` — лист **`CONSISTENCY`** (свод по правилам и стендам), лист **`CONS_REPORT`** (агрегированный реестр нарушений), и при необходимости колонки на листах сущностей (`CONSIST_*`, `CC_*` — см. раздел **`consistency_checks`** в конфиге).
+    - CSV-экспорт листов включается отдельными флагами:
+      - `excel.diff_report_sheet.export_csv` — создание `..._DIFF_REPORT.csv`;
+      - `excel.cons_report_sheet.export_csv` — создание `..._CONS_REPORT.csv`.
    - Добавляются служебные колонки (полный перечень задаётся в `config.json`, в т.ч.):
      - `source_stands`;
      - `source_count`;
@@ -229,7 +232,8 @@
 - `excel` — параметры имени выходного файла (`output_name_prefix`, `output_timestamp_format`);
   - `summary_sheet` — закрепление и автофильтр для `SUMMARY`;
   - `consistency_sheet` — закрепление и автофильтр для `CONSISTENCY`;
-  - `diff_report_sheet` — включение листа `DIFF_REPORT`, имя листа, закрепление, длины контекста для сниппетов;
+  - `diff_report_sheet` — включение листа `DIFF_REPORT`, имя листа, закрепление, длины контекста для сниппетов, флаг `export_csv` (экспорт `DIFF_REPORT` в CSV);
+  - `cons_report_sheet` — настройки листа `CONS_REPORT`, включая флаг `export_csv` (экспорт `CONS_REPORT` в CSV);
   - `formatting_defaults` — автоподбор ширины, лимит, перенос, выравнивание и цвета подсветки;
   - `formatting_defaults.borders` — параметры рамок и разделителей;
   - `formatting_defaults.extra_header_fill` — цвет заголовков доп.полей (зеленый).
@@ -307,6 +311,7 @@ DEBUG-строка:
 - **[сделано]** Лист Excel `DIFF_REPORT` и настройка `excel.diff_report_sheet` в `config.json`.
 - **[сделано]** Детализация дублей перенесена в `DIFF_REPORT` (включая колонки, позиции и сниппеты отличий), а на листах сущностей добавлены `same_row_stands` и `same_key_diff_stands`.
 - **[сделано]** Добавлен лист `CONS_REPORT` с агрегированными нарушениями консистентности.
+- **[сделано]** Добавлены управляемые флаги CSV-экспорта для отчетных листов: `excel.diff_report_sheet.export_csv` и `excel.cons_report_sheet.export_csv` (по умолчанию выключены).
 - **[сделано]** Сохранение логов и Excel в подкаталоги по дате: `YYYY/MM-DD`.
 - **[сделано]** Параллельная обработка файлов/сущностей с авто-числом потоков или явным `--parallel-workers`.
 - **[сделано]** Режим `dry-run` в `runtime` и через CLI `--dry-run`.
