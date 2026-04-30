@@ -37,6 +37,7 @@
 | Параллельная обработка и `dry-run` | `[v]` |
 | Лист `DIFF_REPORT` (Excel + CSV) | `[v]` |
 | Проверки консистентности (`consistency_checks`, `CONSISTENCY`, `CONS_REPORT`) | `[v]` |
+| Реформа основной БД (исторические `csv_*`, аудит `DIFF/CONS`, связи и дедуп сравнений) | `[v]` |
 | Unit-тесты в репозитории | `[w]` |
 | Автоматический CI (GitHub Actions и т.п.) | `[ ]` |
 | Формальные миграции схемы БД | `[ ]` |
@@ -196,7 +197,11 @@
 - [w] Отдельный drill-down UX по расхождениям (сейчас детали есть в `DIFF_REPORT` / `CONS_REPORT`)
 - [v] SQLite-логирование программы в `log/YYYY/MM-DD/DB/` с подробной структурой колонок и отказоустойчивой записью параллельно файловому логу
 - [v] История актуальности файлов в `ingested_files`: запись raw-данных только для новых hash, флаги `is_actual`, `first_seen_at`, `last_status_changed_at`
-- [w] Реформа схемы основной БД: отдельные исторические таблицы исходных CSV по каждому `stand+entity` с актуальностью, дедупликацией по hash и пересозданием базы
+- [v] Реформа схемы основной БД: отдельные исторические таблицы исходных CSV по каждому `stand+entity` с актуальностью, дедупликацией по hash и пересозданием базы
+  - Реализованы таблицы `csv_<entity>_<stand>` с хранением `row_json`, `row_hash`, `business_key`, `row_num`, `status`, `is_actual`, `first_seen_at`, `last_seen_at`, `last_status_changed_at`.
+  - Добавлены таблицы аудита сравнения: `comparison_sets`, `comparison_set_files`, `diff_records`, `cons_records`.
+  - В `diff_records`/`cons_records` добавлены диагностические поля (`diff_columns`, `diff_positions`, `diff_snippets`) и ссылки на исходные строки (`source_table_name`/`selected_table_name`, `source_row_pk`/`selected_row_pk`/`candidate_row_pk`).
+  - Добавлена дедупликация повторного сравнения: если набор файлов уже зафиксирован в `comparison_sets` по сигнатуре, повторная запись `DIFF/CONS` в БД не выполняется.
 
 ---
 
@@ -208,4 +213,5 @@
 | 2026-04 | Введены правила статусов `[v]` / `[w]` / `[ ]` / `[x]` |
 | 2026-05 | Переведен merge на приоритет стендов, расширены `DIFF_REPORT` и `CONS_REPORT` |
 | 2026-05 | Объединены два roadmap в единый `Docs/ROADMAP.md` без потери пунктов |
+| 2026-05 | Завершена реформа основной БД: `csv_*`, `comparison_sets`, `diff_records`, `cons_records`, дедуп повторных сравнений |
 

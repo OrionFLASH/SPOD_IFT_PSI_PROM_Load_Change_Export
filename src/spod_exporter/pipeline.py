@@ -45,6 +45,10 @@ class SpodPipeline:
         self.entity_field_orders: dict[str, dict[str, list[str]]] = defaultdict(dict)
         self.entity_extra_fields: dict[str, set[str]] = defaultdict(set)
         self._diff_report_rows: list[dict[str, str]] = []
+        self._active_file_hash: dict[tuple[str, str], str] = {}
+        self._csv_row_pk_cache: dict[tuple[str, str, str, int], int] = {}
+        self._comparison_set_id: int | None = None
+        self._comparison_is_new: bool = False
         self.runtime_cfg: dict[str, Any] = config.get("runtime", {})
         self.dry_run: bool = bool(self.runtime_cfg.get("dry_run", False))
         self.parallel_workers: int = self._resolve_parallel_workers()
@@ -94,6 +98,7 @@ class SpodPipeline:
             stage_start = time.perf_counter()
             files = self._scan_files()
             stage_timings["scan_files"] = time.perf_counter() - stage_start
+            self._comparison_set_id, self._comparison_is_new = self._upsert_comparison_set(conn, files)
             self._log_found_files_summary(files)
             stage_start = time.perf_counter()
             parsed, parse_stats = self._parse_all_rows(files, conn)
@@ -107,6 +112,9 @@ class SpodPipeline:
             stage_start = time.perf_counter()
             self._run_consistency_checks(parsed, merged)
             stage_timings["consistency_checks"] = time.perf_counter() - stage_start
+            stage_start = time.perf_counter()
+            self._persist_diff_and_cons_records(conn)
+            stage_timings["persist_audit_records"] = time.perf_counter() - stage_start
             stage_start = time.perf_counter()
             self._save_merged_rows(conn, merged)
             stage_timings["save_merged_rows"] = time.perf_counter() - stage_start
@@ -173,12 +181,16 @@ class SpodPipeline:
                 run_id TEXT NOT NULL,
                 stand TEXT NOT NULL,
                 entity_type TEXT NOT NULL,
+                file_hash_sha256 TEXT,
                 row_num INTEGER NOT NULL,
                 row_json TEXT NOT NULL,
                 row_hash TEXT NOT NULL
             )
             """
         )
+        self._ensure_raw_rows_schema(conn)
+        self._create_csv_history_tables(conn)
+        self._create_audit_tables(conn)
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS merged_rows (
@@ -218,6 +230,145 @@ class SpodPipeline:
             if column_name in existing_columns:
                 continue
             cursor.execute(f"ALTER TABLE ingested_files ADD COLUMN {column_name} {column_type}")
+
+    def _ensure_raw_rows_schema(self, conn: sqlite3.Connection) -> None:
+        """Добавляет служебные колонки в raw_rows при миграции."""
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(raw_rows)")
+        existing_columns = {str(row[1]) for row in cursor.fetchall()}
+        if "file_hash_sha256" not in existing_columns:
+            cursor.execute("ALTER TABLE raw_rows ADD COLUMN file_hash_sha256 TEXT")
+
+    def _csv_table_name(self, entity: str, stand: str) -> str:
+        raw_name = f"csv_{entity}_{stand}".lower()
+        normalized = re.sub(r"[^a-z0-9_]", "_", raw_name)
+        return normalized
+
+    def _create_csv_history_tables(self, conn: sqlite3.Connection) -> None:
+        """Создает отдельные таблицы историчности CSV для каждого stand+entity."""
+        cursor = conn.cursor()
+        for entity in self.entities.keys():
+            for stand in self.stands:
+                table_name = self._csv_table_name(entity, stand)
+                cursor.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {table_name} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        run_id TEXT NOT NULL,
+                        file_hash_sha256 TEXT NOT NULL,
+                        row_num INTEGER NOT NULL,
+                        business_key TEXT NOT NULL,
+                        row_hash TEXT NOT NULL,
+                        row_json TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        is_actual INTEGER NOT NULL DEFAULT 0,
+                        first_seen_at TEXT NOT NULL,
+                        last_seen_at TEXT NOT NULL,
+                        last_status_changed_at TEXT NOT NULL
+                    )
+                    """
+                )
+                cursor.execute(
+                    f"""
+                    CREATE UNIQUE INDEX IF NOT EXISTS ux_{table_name}_hash_row
+                    ON {table_name}(file_hash_sha256, row_num)
+                    """
+                )
+                cursor.execute(
+                    f"""
+                    CREATE INDEX IF NOT EXISTS ix_{table_name}_actual
+                    ON {table_name}(is_actual, file_hash_sha256)
+                    """
+                )
+
+    def _create_audit_tables(self, conn: sqlite3.Connection) -> None:
+        """Создает таблицы аудита расхождений DIFF и CONS."""
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS comparison_sets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                signature_hash TEXT NOT NULL UNIQUE,
+                signature_payload TEXT NOT NULL,
+                total_files INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS comparison_set_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                comparison_set_id INTEGER NOT NULL,
+                stand TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                file_hash_sha256 TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                UNIQUE(comparison_set_id, stand, entity_type, file_hash_sha256)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS diff_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                comparison_set_id INTEGER NOT NULL,
+                entity_type TEXT NOT NULL,
+                business_key TEXT NOT NULL,
+                selected_stand TEXT NOT NULL,
+                selected_row_num INTEGER NOT NULL,
+                selected_file_hash_sha256 TEXT NOT NULL,
+                selected_table_name TEXT NOT NULL,
+                selected_row_pk INTEGER,
+                candidate_stand TEXT NOT NULL,
+                candidate_row_num INTEGER NOT NULL,
+                candidate_file_hash_sha256 TEXT NOT NULL,
+                candidate_table_name TEXT NOT NULL,
+                candidate_row_pk INTEGER,
+                relation TEXT NOT NULL,
+                diff_columns TEXT NOT NULL,
+                diff_positions TEXT NOT NULL,
+                diff_snippets TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(
+                    comparison_set_id, entity_type, business_key,
+                    selected_stand, selected_row_num,
+                    candidate_stand, candidate_row_num,
+                    diff_columns, diff_positions
+                )
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cons_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                comparison_set_id INTEGER NOT NULL,
+                entity_type TEXT NOT NULL,
+                stand TEXT,
+                row_num INTEGER,
+                business_key TEXT,
+                file_hash_sha256 TEXT,
+                source_table_name TEXT,
+                source_row_pk INTEGER,
+                rule_id TEXT NOT NULL,
+                rule_type TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                message TEXT NOT NULL,
+                diff_columns TEXT NOT NULL,
+                diff_positions TEXT NOT NULL,
+                diff_snippets TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(
+                    comparison_set_id, entity_type, stand, row_num,
+                    business_key, rule_id, message
+                )
+            )
+            """
+        )
 
     def _save_run(
         self, conn: sqlite3.Connection, status: str, excel_path: Path | None
@@ -344,6 +495,7 @@ class SpodPipeline:
         for descriptor in files:
             is_new_hash = self._is_new_file_hash(cursor, descriptor.file_hash)
             file_is_new_hash[descriptor.file_hash] = is_new_hash
+            self._active_file_hash[(descriptor.entity, descriptor.stand)] = descriptor.file_hash
             if is_new_hash:
                 stats["db_new_files"] += 1
             else:
@@ -369,6 +521,7 @@ class SpodPipeline:
                             self.run_id,
                             descriptor.stand,
                             descriptor.entity,
+                            descriptor.file_hash,
                             row.row_num,
                             json.dumps(row.data, ensure_ascii=False),
                             row.row_hash,
@@ -377,11 +530,15 @@ class SpodPipeline:
                     ]
                     cursor.executemany(
                         """
-                        INSERT INTO raw_rows(run_id, stand, entity_type, row_num, row_json, row_hash)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        INSERT INTO raw_rows(
+                            run_id, stand, entity_type, file_hash_sha256, row_num, row_json, row_hash
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
                         """,
                         raw_rows_payload,
                     )
+                if not self.dry_run:
+                    self._persist_csv_snapshot(conn, descriptor, parsed_rows)
 
                 self.logger.debug(
                     "Обработан файл %s (%s), строк=%s",
@@ -547,7 +704,6 @@ class SpodPipeline:
                 descriptor.file_hash,
             ),
         )
-
         cursor.execute(
             """
             SELECT id, is_actual
@@ -618,6 +774,92 @@ class SpodPipeline:
                 row_id,
             ),
         )
+
+    def _persist_csv_snapshot(
+        self,
+        conn: sqlite3.Connection,
+        descriptor: FileDescriptor,
+        parsed_rows: list[ParsedRow],
+    ) -> None:
+        """Пишет исторический снимок CSV в таблицу stand+entity без повторной записи того же hash."""
+        cursor = conn.cursor()
+        table_name = self._csv_table_name(descriptor.entity, descriptor.stand)
+        now = datetime.now().isoformat()
+        cursor.execute(
+            f"""
+            UPDATE {table_name}
+            SET is_actual = 0,
+                status = 'HISTORICAL',
+                last_status_changed_at = ?
+            WHERE is_actual = 1 AND file_hash_sha256 <> ?
+            """,
+            (now, descriptor.file_hash),
+        )
+        cursor.execute(
+            f"SELECT 1 FROM {table_name} WHERE file_hash_sha256 = ? LIMIT 1",
+            (descriptor.file_hash,),
+        )
+        already_exists = cursor.fetchone() is not None
+        if not already_exists:
+            payload = [
+                (
+                    self.run_id,
+                    descriptor.file_hash,
+                    row.row_num,
+                    row.business_key,
+                    row.row_hash,
+                    json.dumps(row.data, ensure_ascii=False),
+                    "ACTUAL",
+                    1,
+                    now,
+                    now,
+                    now,
+                )
+                for row in parsed_rows
+            ]
+            cursor.executemany(
+                f"""
+                INSERT INTO {table_name}(
+                    run_id, file_hash_sha256, row_num, business_key, row_hash, row_json,
+                    status, is_actual, first_seen_at, last_seen_at, last_status_changed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                payload,
+            )
+        else:
+            cursor.execute(
+                f"""
+                UPDATE {table_name}
+                SET run_id = ?,
+                    status = 'ACTUAL',
+                    is_actual = 1,
+                    last_seen_at = ?,
+                    last_status_changed_at = CASE WHEN is_actual = 1 THEN last_status_changed_at ELSE ? END
+                WHERE file_hash_sha256 = ?
+                """,
+                (self.run_id, now, now, descriptor.file_hash),
+            )
+        for row in parsed_rows:
+            cursor.execute(
+                f"""
+                SELECT id
+                FROM {table_name}
+                WHERE file_hash_sha256 = ? AND row_num = ?
+                LIMIT 1
+                """,
+                (descriptor.file_hash, row.row_num),
+            )
+            fetched = cursor.fetchone()
+            if fetched is None:
+                continue
+            self._csv_row_pk_cache[
+                (descriptor.entity, descriptor.stand, descriptor.file_hash, int(row.row_num))
+            ] = int(fetched[0])
+
+    def _resolve_csv_row_pk(
+        self, entity: str, stand: str, file_hash: str, row_num: int
+    ) -> int | None:
+        return self._csv_row_pk_cache.get((entity, stand, file_hash, row_num))
 
     def _normalize_row(self, row: dict[str, str | None]) -> dict[str, str]:
         """Канонизирует CSV-строку для корректного сравнения между стендами."""
@@ -1011,6 +1253,193 @@ class SpodPipeline:
             right_part = right_val[max(0, pos - left_context) : pos + right_context]
             snippets.append(f"{col} => [{left_part}] != [{right_part}]")
         return " | ".join(positions), " | ".join(snippets)
+
+    def _upsert_comparison_set(
+        self, conn: sqlite3.Connection, files: list[FileDescriptor]
+    ) -> tuple[int | None, bool]:
+        """Фиксирует набор сравниваемых файлов. Если набор уже был, возвращает существующий id."""
+        cursor = conn.cursor()
+        payload = sorted(
+            [
+                {
+                    "entity": f.entity,
+                    "stand": f.stand,
+                    "file_name": f.file_name,
+                    "file_hash": f.file_hash,
+                    "file_path": str(f.file_path),
+                }
+                for f in files
+            ],
+            key=lambda x: (x["entity"], x["stand"], x["file_hash"]),
+        )
+        signature_payload = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        signature_hash = hashlib.sha256(signature_payload.encode("utf-8")).hexdigest()
+        now = datetime.now().isoformat()
+        cursor.execute(
+            "SELECT id FROM comparison_sets WHERE signature_hash = ? LIMIT 1",
+            (signature_hash,),
+        )
+        existing = cursor.fetchone()
+        if existing is not None:
+            comparison_set_id = int(existing[0])
+            cursor.execute(
+                "UPDATE comparison_sets SET last_seen_at = ? WHERE id = ?",
+                (now, comparison_set_id),
+            )
+            return comparison_set_id, False
+
+        cursor.execute(
+            """
+            INSERT INTO comparison_sets(
+                signature_hash, signature_payload, total_files, created_at, last_seen_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (signature_hash, signature_payload, len(files), now, now),
+        )
+        comparison_set_id = int(cursor.lastrowid)
+        cursor.executemany(
+            """
+            INSERT OR IGNORE INTO comparison_set_files(
+                comparison_set_id, stand, entity_type, file_name, file_hash_sha256, file_path
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    comparison_set_id,
+                    f.stand,
+                    f.entity,
+                    f.file_name,
+                    f.file_hash,
+                    str(f.file_path),
+                )
+                for f in files
+            ],
+        )
+        return comparison_set_id, True
+
+    def _persist_diff_and_cons_records(self, conn: sqlite3.Connection) -> None:
+        """Пишет DIFF/CONS в БД только если набор файлов сравнивается впервые."""
+        if self.dry_run:
+            return
+        if self._comparison_set_id is None:
+            return
+        if not self._comparison_is_new:
+            self.logger.info(
+                "DIFF/CONS: набор файлов уже сравнивался ранее, повторная запись в БД пропущена"
+            )
+            return
+        self._persist_diff_records(conn, self._comparison_set_id)
+        self._persist_cons_records(conn, self._comparison_set_id)
+
+    def _persist_diff_records(self, conn: sqlite3.Connection, comparison_set_id: int) -> None:
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        payload: list[tuple[Any, ...]] = []
+        for row in self._diff_report_rows:
+            entity = str(row.get("entity", ""))
+            selected_stand = str(row.get("selected_stand", ""))
+            candidate_stand = str(row.get("candidate_stand", ""))
+            selected_row_num = int(row.get("selected_row_num", "0") or 0)
+            candidate_row_num = int(row.get("candidate_row_num", "0") or 0)
+            selected_hash = self._active_file_hash.get((entity, selected_stand), "")
+            candidate_hash = self._active_file_hash.get((entity, candidate_stand), "")
+            selected_table_name = self._csv_table_name(entity, selected_stand)
+            candidate_table_name = self._csv_table_name(entity, candidate_stand)
+            selected_row_pk = self._resolve_csv_row_pk(
+                entity, selected_stand, selected_hash, selected_row_num
+            )
+            candidate_row_pk = self._resolve_csv_row_pk(
+                entity, candidate_stand, candidate_hash, candidate_row_num
+            )
+            payload.append(
+                (
+                    comparison_set_id,
+                    entity,
+                    str(row.get("business_key", "")),
+                    selected_stand,
+                    selected_row_num,
+                    selected_hash,
+                    selected_table_name,
+                    selected_row_pk,
+                    candidate_stand,
+                    candidate_row_num,
+                    candidate_hash,
+                    candidate_table_name,
+                    candidate_row_pk,
+                    str(row.get("relation", "")),
+                    str(row.get("diff_columns", "")),
+                    str(row.get("diff_positions", "")),
+                    str(row.get("diff_snippets", "")),
+                    now,
+                )
+            )
+        if payload:
+            cursor.executemany(
+                """
+                INSERT OR IGNORE INTO diff_records(
+                    comparison_set_id, entity_type, business_key,
+                    selected_stand, selected_row_num, selected_file_hash_sha256,
+                    selected_table_name, selected_row_pk,
+                    candidate_stand, candidate_row_num, candidate_file_hash_sha256,
+                    candidate_table_name, candidate_row_pk,
+                    relation, diff_columns, diff_positions, diff_snippets, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                payload,
+            )
+
+    def _persist_cons_records(self, conn: sqlite3.Connection, comparison_set_id: int) -> None:
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        payload: list[tuple[Any, ...]] = []
+        for v in self._consistency_violations:
+            entity = str(v.entity)
+            stand = str(v.stand) if v.stand else ""
+            row_num = int(v.row_num) if v.row_num else None
+            file_hash = self._active_file_hash.get((entity, stand), "") if stand else ""
+            source_table_name = self._csv_table_name(entity, stand) if stand else ""
+            source_row_pk = (
+                self._resolve_csv_row_pk(entity, stand, file_hash, row_num)
+                if stand and row_num and file_hash
+                else None
+            )
+            diff_columns, diff_positions, diff_snippets = self._build_consistency_diff_details(
+                entity=entity,
+                message=str(v.message),
+            )
+            payload.append(
+                (
+                    comparison_set_id,
+                    entity,
+                    stand if stand else None,
+                    row_num,
+                    str(v.business_key) if v.business_key else None,
+                    file_hash if file_hash else None,
+                    source_table_name if source_table_name else None,
+                    source_row_pk,
+                    str(v.rule_id),
+                    str(v.rule_type),
+                    str(v.scope),
+                    str(v.severity),
+                    str(v.message),
+                    diff_columns,
+                    diff_positions,
+                    diff_snippets,
+                    now,
+                )
+            )
+        if payload:
+            cursor.executemany(
+                """
+                INSERT OR IGNORE INTO cons_records(
+                    comparison_set_id, entity_type, stand, row_num, business_key,
+                    file_hash_sha256, source_table_name, source_row_pk,
+                    rule_id, rule_type, scope, severity, message,
+                    diff_columns, diff_positions, diff_snippets, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                payload,
+            )
 
     def _build_cluster_payload(
         self, reference_row: ParsedRow, cluster_rows: list[ParsedRow]
